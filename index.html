@@ -41,8 +41,11 @@
     font-size:13px;line-height:1;letter-spacing:.16em;text-transform:lowercase;
   }
 
-  .title-row{display:flex;align-items:flex-start;gap:12px;margin:0 0 20px}
+  .title-row{display:flex;align-items:flex-start;gap:10px;margin:0 0 20px}
   .title-row h1{margin:0;flex:1}
+  .app-help-launch{width:34px;height:34px;min-height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:#444;flex:0 0 auto;margin-top:0}
+  .app-help-launch svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.05;stroke-linecap:round;stroke-linejoin:round}
+  .app-help-launch:hover{color:#111}
   .app-version{display:inline-block;margin-left:.65em;vertical-align:.18em;font-family:"Times New Roman",Times,serif;font-size:10px;font-weight:400;letter-spacing:.12em;color:#999;white-space:nowrap}
   #copyrightCredit{position:absolute;z-index:4;right:28px;bottom:7px;max-width:min(520px,calc(100vw - 56px));font-family:"Times New Roman",Times,serif;font-size:9px;line-height:1.4;letter-spacing:.08em;color:#aaa;text-align:right;pointer-events:none;white-space:nowrap}
   .qr-launch{
@@ -55,10 +58,20 @@
   #qrDialog::backdrop{background:rgba(255,255,255,.90)}
   #qrDialog .dialog-close{position:absolute;right:22px;top:18px;width:24px;height:24px;min-height:24px;border:0;background:transparent;font-size:20px;color:#666;padding:0}
   #qrDialog h2{margin:0 34px 20px 0;font-weight:400;font-size:18px;letter-spacing:.06em}
+  #appHelpDialog{width:min(720px,calc(100vw - 36px));max-height:84vh;border:1px solid #d7d7d7;background:#fff;padding:32px 36px 34px;color:#333;box-shadow:none}
+  #appHelpDialog::backdrop{background:rgba(255,255,255,.90)}
+  #appHelpDialog .dialog-close{position:absolute;right:22px;top:18px;width:24px;height:24px;min-height:24px;border:0;background:transparent;font-size:20px;color:#666;padding:0}
+  #appHelpDialog h2{margin:0 34px 20px 0;font-weight:400;font-size:18px;letter-spacing:.06em}
+  #appHelpDialog h3{margin:22px 0 8px;font-size:11px;font-weight:400;letter-spacing:.12em;color:#777}
+  #appHelpDialog p{margin:0 0 9px;font-size:12px;line-height:1.9;color:#555}
+  #appHelpDialog ul{margin:6px 0 0 1.2em;padding:0;color:#555;font-size:12px;line-height:1.9}
+  #appHelpDialog .help-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 28px}
+  #appHelpDialog .help-note{margin-top:16px;padding-top:12px;border-top:1px solid #e2e2e2;color:#888;font-size:10px;line-height:1.8}
+  @media(max-width:620px){#appHelpDialog{padding:26px 24px 28px}#appHelpDialog .help-grid{grid-template-columns:1fr;gap:0}}
   .qr-popup-body{display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center}
   .qr-popup-body img{display:block;width:min(380px,78vw);height:auto;image-rendering:pixelated;background:#fff}
   .qr-popup-url{font-family:"Times New Roman",Times,serif;font-size:12px;letter-spacing:.04em;color:#555;text-decoration:none;border-bottom:1px solid #bbb;overflow-wrap:anywhere}
-  @media(max-width:820px){.title-row{gap:8px;margin-bottom:14px}.qr-launch{width:30px;height:30px;min-height:30px;margin-top:2px}.qr-launch svg{width:22px;height:22px}}
+  @media(max-width:820px){.title-row{gap:7px;margin-bottom:14px}.qr-launch,.app-help-launch{width:30px;height:30px;min-height:30px;margin-top:2px}.qr-launch svg,.app-help-launch svg{width:22px;height:22px}}
   h1{
     margin:0 0 20px;color:#333333;
     font-family:"Hiragino Mincho ProN","Hiragino Mincho Pro","YuMincho","Yu Mincho","MS PMincho",serif;
@@ -406,6 +419,9 @@
           <path d="M16 15h3v3h-3zM21 15h2v2h-2zM16 21h2v2h-2zM20 20h3v3h-3z"/>
         </svg>
       </button>
+      <button id="appHelpBtn" class="app-help-launch" type="button" aria-label="特徴と使い方を表示" title="特徴と使い方">
+        <svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="10.5"/><path d="M10.8 10.4c.4-2.1 1.9-3.4 4.1-3.4 2.5 0 4.2 1.5 4.2 3.7 0 1.8-1 2.8-2.6 3.8-1.5.9-2.1 1.8-2.1 3.4v.5"/><circle cx="14.4" cy="21.4" r=".7" fill="currentColor" stroke="none"/></svg>
+      </button>
       <h1>かがり手まり 3D制作工程 <span class="app-version">Version 1</span></h1>
     </div>
     <p>①手まり芯、②地割り、③かがりを一続きで追い、針が右から入り球内へ潜って左へ抜ける動きと、糸の上下関係も確認できる単体HTMLです。</p>
@@ -425,6 +441,7 @@
         <option value="truncNet">7. 切頂20面体の展開平面図</option>
         <option value="dode3d">8. 正12面体の立体表示</option>
         <option value="dodeNet">9. 正12面体の展開平面図</option>
+        <option value="ortho">10. 正射図法（北半球・南半球）</option>
       </select>
       <button id="svgExportBtn" type="button">SVG出力</button>
     </div>
@@ -574,6 +591,38 @@
     <div id="dyePaletteGrid"></div>
     <div class="dye-source-footer">source: <a href="https://maitokomuro.com/iroziten/" target="_blank" rel="noopener">Maito Design Works — 草木染めの色辞典 ↗</a></div>
   </dialog>
+  <dialog id="appHelpDialog" aria-labelledby="appHelpDialogTitle">
+    <button id="appHelpClose" class="dialog-close" type="button" aria-label="閉じる">×</button>
+    <h2 id="appHelpDialogTitle">特徴と使い方</h2>
+    <p>かがり手まりの制作を、①手まり芯、②地割り、③かがりの順で追える3D工程ビューアです。糸だけでなく針の向き・刺入・球内通過、かがりの上下関係も工程に合わせて表示します。</p>
+    <div class="help-grid">
+      <div>
+        <h3>FEATURES / 特徴</h3>
+        <ul>
+          <li>複数の代表図案を工程順に再生し、1手・1フレーム単位でも確認できます。</li>
+          <li>通常の球体、平面展開、正20面体、切頂20面体、正12面体に加え、北・南半球を並べた正射図法で確認できます。</li>
+          <li>糸色・太さ・線種を共通または糸ごとに設定でき、リアリスティック3D素材も選択できます。</li>
+          <li>手まり直径から地割り糸とかがり糸の幾何学的な経路長を推定します。</li>
+          <li>平面系の表示モードはSVGとして出力できます。</li>
+          <li>各図案には参照した手まり技法・図案サイトへのリンクがあります。</li>
+        </ul>
+      </div>
+      <div>
+        <h3>CONTROLS / 基本操作</h3>
+        <ul>
+          <li>再生／停止：上部の線画アイコン。スマートフォンでは3D表示部分のタップでも切り替えます。</li>
+          <li>1手進む・戻る：工程単位で移動します。1フレーム進む・戻る：針の動きを細かく確認します。</li>
+          <li>PC：ドラッグで回転、Shift＋ドラッグで平行移動、ホイールで拡大縮小します。</li>
+          <li>スマートフォン：1本指で操作し、2本指ピンチで拡大縮小します。</li>
+          <li>画面下のタイムラインは任意位置へ移動できます。</li>
+          <li>設定は右上の settings から表示／非表示を切り替えます。</li>
+        </ul>
+      </div>
+    </div>
+    <h3>ORTHOGRAPHIC / 正射図法</h3>
+    <p>「正射図法（北半球・南半球）」では、球を北極側と南極側から正射投影した2つの円を横に並べます。同じ経度方向をそろえているため、極を中心とする図案や地割りの対応を比較しやすくしています。</p>
+    <p class="help-note">本アプリは教育・工程理解を目的とした可視化です。図案ごとの公開資料に工程や寸法が明記されている場合はそれを優先し、球面上の寸法は表示用に正規化している場合があります。</p>
+  </dialog>
   <dialog id="qrDialog" aria-labelledby="qrDialogTitle">
     <button id="qrDialogClose" class="dialog-close" type="button" aria-label="閉じる">×</button>
     <h2 id="qrDialogTitle">かがり手まり 3D制作工程</h2>
@@ -603,6 +652,7 @@
   const allRefsBtn=document.getElementById('allRefsBtn'),referencesDialog=document.getElementById('referencesDialog'),referencesClose=document.getElementById('referencesClose'),allReferencesList=document.getElementById('allReferencesList');
   const dyeDialog=document.getElementById('dyeDialog'),dyeDialogClose=document.getElementById('dyeDialogClose'),dyeSearch=document.getElementById('dyeSearch'),dyePaletteGrid=document.getElementById('dyePaletteGrid'),materialHelpDialog=document.getElementById('materialHelpDialog'),materialHelpClose=document.getElementById('materialHelpClose'),materialHelpTitle=document.getElementById('materialHelpTitle'),materialHelpBody=document.getElementById('materialHelpBody');
   const qrLaunchBtn=document.getElementById('qrLaunchBtn'),qrDialog=document.getElementById('qrDialog'),qrDialogClose=document.getElementById('qrDialogClose');
+  const appHelpBtn=document.getElementById('appHelpBtn'),appHelpDialog=document.getElementById('appHelpDialog'),appHelpClose=document.getElementById('appHelpClose');
   const diameterCm=document.getElementById('diameterCm'),threadLengthSummary=document.getElementById('threadLengthSummary');
   const displayModeSelect=document.getElementById('displayModeSelect'),svgExportBtn=document.getElementById('svgExportBtn'),displayModeHint=document.getElementById('displayModeHint');
 
@@ -1301,6 +1351,10 @@
   function planeBounds(){return{width:Math.PI*2,height:Math.PI};}
   function goreBounds(){const n=divisionCountForKey(); const sw=(2*Math.PI/n)*1.18; return{width:n*sw,height:Math.PI};}
   function goreCoords(p){const {lat,lon}=cartesianToLatLon(p),n=divisionCountForKey(); const span=2*Math.PI/n,wrap=((lon+Math.PI)%(Math.PI*2)+Math.PI*2)%(Math.PI*2); const idx=Math.min(n-1,Math.floor(wrap/span)); const center=(idx+.5)*span; const local=wrap-center; const max=span/2; const strip=span*1.18; const half=Math.max(.02,Math.cos(lat)*span*.47); const x=(idx-n/2+.5)*strip + (local/max)*half; return{x,y:lat,gore:idx};}
+  function orthoBounds(){return{width:4.55,height:2.35};}
+  function orthoCenterX(hemi){return hemi==='N'?-1.18:1.18;}
+  function orthoCoordsForHemisphere(p,hemi){const n=norm(p);return{x:orthoCenterX(hemi)+n.x,y:n.z,hemi};}
+  function projectOrthoPoint(p,hemi){const g=orthoCoordsForHemisphere(p,hemi),q=projectLocal2D(g.x,g.y,orthoBounds());q.meta={mode:'ortho',hemi};return q;}
   function icoNetCoords(p){const info=rayToIcosahedron(norm(p)); const lay=icoNet.faces[info.face].pts; const bc=info.bary; const x=bc[0]*lay[0].x+bc[1]*lay[1].x+bc[2]*lay[2].x - (icoNet.bounds.minX+icoNet.bounds.maxX)/2; const y=bc[0]*lay[0].y+bc[1]*lay[1].y+bc[2]*lay[2].y - (icoNet.bounds.minY+icoNet.bounds.maxY)/2; return{x,y,face:info.face};}
   function mapPointToIcosahedron(p){const info=rayToIcosahedron(norm(p)); return scale(info.point,len(p));}
   function projMeta(p){
@@ -1308,6 +1362,7 @@
     if(state.displayMode==='ico3d'){const m=mapPointToIcosahedron(p),q=rotate(m),d=3.7,f=1/(d-q.z),base=Math.min(canvas.clientWidth,canvas.clientHeight)*1.35*state.zoom; return{x:canvas.clientWidth/2+state.panX+q.x*base*f,y:canvas.clientHeight/2+state.panY-q.y*base*f,z:q.z,meta:{mode:'ico3d'},world:q};}
     if(state.displayMode==='trunc3d'){const m=mapPointToTruncated(p),q=rotate(m),d=3.7,f=1/(d-q.z),base=Math.min(canvas.clientWidth,canvas.clientHeight)*1.35*state.zoom; return{x:canvas.clientWidth/2+state.panX+q.x*base*f,y:canvas.clientHeight/2+state.panY-q.y*base*f,z:q.z,meta:{mode:'trunc3d'},world:q};}
     if(state.displayMode==='dode3d'){const m=mapPointToDodecahedron(p),q=rotate(m),d=3.7,f=1/(d-q.z),base=Math.min(canvas.clientWidth,canvas.clientHeight)*1.35*state.zoom; return{x:canvas.clientWidth/2+state.panX+q.x*base*f,y:canvas.clientHeight/2+state.panY-q.y*base*f,z:q.z,meta:{mode:'dode3d'},world:q};}
+    if(state.displayMode==='ortho'){const n=norm(p),hemi=n.y>=0?'N':'S',q=projectOrthoPoint(p,hemi);q.z=1;return q;}
     if(state.displayMode==='plane'){const ll=cartesianToLatLon(p),q=projectLocal2D(wrapLon(ll.lon),ll.lat,planeBounds()); q.meta={mode:'plane',lon:ll.lon,lat:ll.lat}; return q;}
     if(state.displayMode==='gore'){const g=goreCoords(p),q=projectLocal2D(g.x,g.y,goreBounds()); q.meta={mode:'gore',gore:g.gore,lat:g.y}; return q;}
     if(state.displayMode==='icoNet'){const g=icoNetCoords(p),q=projectLocal2D(g.x,g.y,{width:icoNet.bounds.width,height:icoNet.bounds.height}); q.meta={mode:'icoNet',face:g.face}; return q;}
@@ -1318,6 +1373,7 @@
     if(!m0||!m1)return false;
     if(m0.mode==='plane')return Math.abs((m1.lon||0)-(m0.lon||0))>Math.PI;
     if(m0.mode==='gore')return m0.gore!==m1.gore;
+    if(m0.mode==='ortho')return m0.hemi!==m1.hemi;
     if(m0.mode==='icoNet'){
       if(m0.face===m1.face)return false;
       if(a2&&b2){
@@ -1368,6 +1424,12 @@
       const f0=a.meta.face,f1=b.meta.face;let lo=0,hi=1;
       for(let k=0;k<40;k++){const mid=(lo+hi)/2,m=sphereInterp(p0,p1,mid),fm=rayToDodecahedron(norm(m)).face;if(fm===f0)lo=mid;else hi=mid;}
       const t=(lo+hi)/2,p=sphereInterp(p0,p1,t),qa=projectDodeBoundaryPoint(p,f0),qb=projectDodeBoundaryPoint(p,f1);return{t,p,qa,qb};
+    }
+    if(state.displayMode==='ortho'&&a.meta.hemi!==b.meta.hemi){
+      const h0=a.meta.hemi,h1=b.meta.hemi;let lo=0,hi=1;
+      const y0=norm(p0).y;
+      for(let k=0;k<42;k++){const mid=(lo+hi)/2,m=sphereInterp(p0,p1,mid),ym=norm(m).y;if((y0>=0&&ym>=0)||(y0<0&&ym<0))lo=mid;else hi=mid;}
+      const t=(lo+hi)/2,p=sphereInterp(p0,p1,t),qa=projectOrthoPoint(p,h0),qb=projectOrthoPoint(p,h1);return{t,p,qa,qb};
     }
     if(state.displayMode==='plane'&&Math.abs((b.meta.lon||0)-(a.meta.lon||0))>Math.PI){
       const lon0=a.meta.lon,lon1=b.meta.lon;let target=lon0>0?Math.PI:-Math.PI,adj=lon1;if(lon0>0&&lon1<0)adj=lon1+Math.PI*2;if(lon0<0&&lon1>0)adj=lon1-Math.PI*2;const t=clamp((target-lon0)/(adj-lon0||1e-9),0,1),p=sphereInterp(p0,p1,t),ll=cartesianToLatLon(p),qa=projectLocal2D(target,ll.lat,planeBounds()),qb=projectLocal2D(-target,ll.lat,planeBounds());qa.meta={mode:'plane',lon:target,lat:ll.lat};qb.meta={mode:'plane',lon:-target,lat:ll.lat};return{t,p,qa,qb};
@@ -1457,7 +1519,7 @@
   function formatLengthCm(cm){return cm>=100?`${(cm/100).toFixed(cm>=1000?2:2)} m`:`${cm.toFixed(1)} cm`;}
   function updateDisplayModeUI(){
     displayModeSelect.value=state.displayMode;
-    const planar=state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet';
+    const planar=state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet'||state.displayMode==='ortho';
     svgExportBtn.disabled=!planar;
     svgExportBtn.style.opacity=planar?'1':'.45';
     displayModeHint.textContent=planar?'平面表示ではSVG出力できます。':'3D表示ではSVG出力はできません。';
@@ -1469,10 +1531,14 @@
     return scene;
   }
   function exportCurrentSVG(){
-    if(!(state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet')) return;
+    if(!(state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet'||state.displayMode==='ortho')) return;
     const scene=buildSceneForExport(),w=canvas.clientWidth,h=canvas.clientHeight;
     const parts=[`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`,`<rect width="100%" height="100%" fill="#ffffff"/>`];
     const outline=(pts)=>parts.push(`<path d="${pts.map((q,i)=>(i?'L ':'M ')+q.x.toFixed(2)+' '+q.y.toFixed(2)).join(' ')} Z" fill="none" stroke="#9b8f72" stroke-width="1"/>`);
+    if(state.displayMode==='ortho'){
+      const b=orthoBounds();
+      for(const [hemi,label] of [['N','北半球'],['S','南半球']]){const c=projectLocal2D(orthoCenterX(hemi),0,b),e=projectLocal2D(orthoCenterX(hemi)+1,0,b),r=Math.abs(e.x-c.x);parts.push(`<circle cx="${c.x.toFixed(2)}" cy="${c.y.toFixed(2)}" r="${r.toFixed(2)}" fill="none" stroke="#9b8f72" stroke-width="1"/>`);parts.push(`<text x="${c.x.toFixed(2)}" y="${(c.y-r-10).toFixed(2)}" font-size="11" text-anchor="middle" fill="#756b58">${label}</text>`);}
+    }
     if(state.displayMode==='icoNet'){for(const face of icoNet.faces){outline(face.pts.map(pt=>projectLocal2D(pt.x-(icoNet.bounds.minX+icoNet.bounds.maxX)/2,pt.y-(icoNet.bounds.minY+icoNet.bounds.maxY)/2,{width:icoNet.bounds.width,height:icoNet.bounds.height})))}}
     if(state.displayMode==='truncNet'){for(const face of truncNet.faces){const pts=face.pts.map(pt=>projectLocal2D(pt.x-(truncNet.bounds.minX+truncNet.bounds.maxX)/2,pt.y-(truncNet.bounds.minY+truncNet.bounds.maxY)/2,{width:truncNet.bounds.width,height:truncNet.bounds.height}));outline(pts);const qc=projectLocal2D(face.center.x-(truncNet.bounds.minX+truncNet.bounds.maxX)/2,face.center.y-(truncNet.bounds.minY+truncNet.bounds.maxY)/2,{width:truncNet.bounds.width,height:truncNet.bounds.height});parts.push(`<text x="${qc.x.toFixed(2)}" y="${qc.y.toFixed(2)}" font-size="9" text-anchor="middle" fill="#756b58">${face.type==='pentagon'?'P'+(face.face+1):'H'+(face.face-11)}</text>`)}}
     if(state.displayMode==='dodeNet'){for(const face of dodeNet.faces){const pts=face.pts.map(pt=>projectLocal2D(pt.x-(dodeNet.bounds.minX+dodeNet.bounds.maxX)/2,pt.y-(dodeNet.bounds.minY+dodeNet.bounds.maxY)/2,{width:dodeNet.bounds.width,height:dodeNet.bounds.height}));outline(pts);const qc=projectLocal2D(face.center.x-(dodeNet.bounds.minX+dodeNet.bounds.maxX)/2,face.center.y-(dodeNet.bounds.minY+dodeNet.bounds.maxY)/2,{width:dodeNet.bounds.width,height:dodeNet.bounds.height});parts.push(`<text x="${qc.x.toFixed(2)}" y="${qc.y.toFixed(2)}" font-size="9" text-anchor="middle" fill="#756b58">F${face.face+1}</text>`)}}
@@ -1857,6 +1923,19 @@
   function coreVisibility(){const seq=currentPattern().allSteps;if(state.stepIndex===0)return .18+.82*clamp(state.stepProgress,0,1);return seq.length?1:0}
   function drawFlatModeBackdrop(){
     const cx=canvas.clientWidth/2+state.panX,cy=canvas.clientHeight/2+state.panY;
+    if(state.displayMode==='ortho'){
+      const bounds=orthoBounds(),sc=Math.min((canvas.clientWidth*.88)/bounds.width,(canvas.clientHeight*.78)/bounds.height)*state.zoom;
+      ctx.save();ctx.globalAlpha=.97;
+      for(const [hemi,label] of [['N','北半球'],['S','南半球']]){
+        const c=projectLocal2D(orthoCenterX(hemi),0,bounds),r=sc;
+        ctx.beginPath();ctx.arc(c.x,c.y,r,0,Math.PI*2);ctx.fillStyle=mixHex(state.coreColor,'#ffffff',.22);ctx.fill();ctx.strokeStyle='rgba(120,108,80,.40)';ctx.lineWidth=1;ctx.stroke();
+        ctx.strokeStyle='rgba(145,135,112,.17)';ctx.lineWidth=.7;
+        for(const rr of [.5,.866]){ctx.beginPath();ctx.arc(c.x,c.y,r*rr,0,Math.PI*2);ctx.stroke();}
+        for(let a=0;a<Math.PI;a+=Math.PI/4){ctx.beginPath();ctx.moveTo(c.x-Math.cos(a)*r,c.y-Math.sin(a)*r);ctx.lineTo(c.x+Math.cos(a)*r,c.y+Math.sin(a)*r);ctx.stroke();}
+        ctx.font='400 11px "Hiragino Mincho ProN","Yu Mincho",serif';ctx.textAlign='center';ctx.textBaseline='bottom';ctx.fillStyle='rgba(80,76,68,.72)';ctx.fillText(label,c.x,c.y-r-8);
+      }
+      ctx.restore();return;
+    }
     let bounds=planeBounds(); if(state.displayMode==='gore') bounds=goreBounds(); else if(state.displayMode==='icoNet') bounds={width:icoNet.bounds.width,height:icoNet.bounds.height}; else if(state.displayMode==='truncNet') bounds={width:truncNet.bounds.width,height:truncNet.bounds.height}; else if(state.displayMode==='dodeNet') bounds={width:dodeNet.bounds.width,height:dodeNet.bounds.height};
     const scale=Math.min((canvas.clientWidth*.88)/(bounds.width||1),(canvas.clientHeight*.78)/(bounds.height||1))*state.zoom, w=bounds.width*scale,h=bounds.height*scale;
     ctx.save();ctx.globalAlpha=.95; ctx.fillStyle=mixHex(state.coreColor,'#ffffff',.22); ctx.fillRect(cx-w/2,cy-h/2,w,h); ctx.strokeStyle='rgba(90,90,90,.16)'; ctx.lineWidth=1; ctx.strokeRect(cx-w/2,cy-h/2,w,h);
@@ -1895,7 +1974,7 @@
   }
   function drawCoreSphere(){
     const vis=coreVisibility();if(vis<=.001)return;
-    if(state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet'){ drawFlatModeBackdrop(); return; }
+    if(state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet'||state.displayMode==='ortho'){ drawFlatModeBackdrop(); return; }
     if(state.displayMode==='ico3d'){ drawIco3DBase(vis); return; }
     if(state.displayMode==='trunc3d'){ drawTrunc3DBase(vis); return; }
     if(state.displayMode==='dode3d'){ drawDode3DBase(vis); return; }
@@ -2516,6 +2595,8 @@
   referencesClose.addEventListener('click',()=>referencesDialog.close());
   qrLaunchBtn.addEventListener('click',()=>{if(typeof qrDialog.showModal==='function')qrDialog.showModal();else qrDialog.setAttribute('open','')});
   qrDialogClose.addEventListener('click',()=>qrDialog.close());
+  appHelpBtn.addEventListener('click',()=>{if(typeof appHelpDialog.showModal==='function')appHelpDialog.showModal();else appHelpDialog.setAttribute('open','')});
+  appHelpClose.addEventListener('click',()=>appHelpDialog.close());
   referencesDialog.addEventListener('click',e=>{const r=referencesDialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)referencesDialog.close()});
   dyeDialogClose.addEventListener('click',()=>dyeDialog.close());
   dyeDialog.addEventListener('click',e=>{const r=dyeDialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dyeDialog.close()});
@@ -2590,7 +2671,7 @@
     }
     if(activePointers.size===1){
       const dx=e.clientX-lastX,dy=e.clientY-lastY;lastX=e.clientX;lastY=e.clientY;
-      if(e.shiftKey){state.panX+=dx;state.panY+=dy}else{state.ry+=dx*.008;state.rx+=dy*.008}
+      if(e.shiftKey||state.displayMode==='ortho'){state.panX+=dx;state.panY+=dy}else{state.ry+=dx*.008;state.rx+=dy*.008}
     }
   });
   function finishPointer(e,cancelled=false){
