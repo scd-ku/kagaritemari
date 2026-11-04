@@ -446,6 +446,7 @@
       <button id="svgExportBtn" type="button">SVG出力</button>
       <button id="divisionStlBtn" type="button">地割りSTL</button>
       <button id="kagariStlBtn" type="button">かがり糸STL</button>
+      <button id="boundaryStlBtn" type="button" title="展開図にある各面・パーツの輪郭のみを独立したSTLで保存">面の境界STL</button>
       <button id="kagariGcodeBtn" type="button" title="かがり順にG0/G1を出力します。添付のA1 mini・PLA Basic設定で編集用G-codeを生成します">かがりG-code</button>
     </div>
     <p class="small" id="displayModeHint">STLは現在の表示モードに合わせて出力します。</p>
@@ -609,6 +610,7 @@
           <li>手まり直径から地割り糸とかがり糸の幾何学的な経路長を推定します。</li>
           <li>平面系の表示モードはSVGとして出力できます。</li>
           <li>地割り線とかがり糸はSTLとして出力できます。立体表示は3D形状、展開平面図は面上の丸断面チューブとして出力し、面境界は切断します。かがり糸は1×＝直径0.5 mmで太さ倍率に連動します。</li>
+          <li>展開図では「面の境界STL」から各面・パーツの輪郭線だけを独立したSTLとして保存できます。正20面体などで隣り合う面の共通辺は一度だけ出力します。輪郭の断面直径は0.35 mmです。</li>
           <li>「かがりG-code」は現在の表示モードをもとに、かがりの順番を維持したG0/G1命令を出力します。展開図の境界や手と手の間は押出しのない移動で接続します。<a href="https://scd-ku.github.io/gcodelayers/" target="_blank" rel="noopener">Gcode Layer Editor</a> に読み込んで軌跡を確認できます。</li>
           <li>各図案には参照した手まり技法・図案サイトへのリンクがあります。</li>
         </ul>
@@ -660,7 +662,7 @@
   const qrLaunchBtn=document.getElementById('qrLaunchBtn'),qrDialog=document.getElementById('qrDialog'),qrDialogClose=document.getElementById('qrDialogClose');
   const appHelpBtn=document.getElementById('appHelpBtn'),appHelpDialog=document.getElementById('appHelpDialog'),appHelpClose=document.getElementById('appHelpClose');
   const diameterCm=document.getElementById('diameterCm'),threadLengthSummary=document.getElementById('threadLengthSummary');
-  const displayModeSelect=document.getElementById('displayModeSelect'),svgExportBtn=document.getElementById('svgExportBtn'),divisionStlBtn=document.getElementById('divisionStlBtn'),kagariStlBtn=document.getElementById('kagariStlBtn'),kagariGcodeBtn=document.getElementById('kagariGcodeBtn'),displayModeHint=document.getElementById('displayModeHint');
+  const displayModeSelect=document.getElementById('displayModeSelect'),svgExportBtn=document.getElementById('svgExportBtn'),divisionStlBtn=document.getElementById('divisionStlBtn'),kagariStlBtn=document.getElementById('kagariStlBtn'),boundaryStlBtn=document.getElementById('boundaryStlBtn'),kagariGcodeBtn=document.getElementById('kagariGcodeBtn'),displayModeHint=document.getElementById('displayModeHint');
 
   // ---------- vector / spherical utilities ----------
   const V=(x,y,z)=>({x,y,z});
@@ -1528,7 +1530,9 @@
     const planar=state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet'||state.displayMode==='ortho';
     svgExportBtn.disabled=!planar;
     svgExportBtn.style.opacity=planar?'1':'.45';
-    displayModeHint.textContent=planar?'SVG・STLは現在の展開平面図に合わせて出力します。STLは24 MB未満のバイナリ形式です。糸はXY平面上の丸断面です（1×＝直径0.5 mm）。':'STLは現在の立体表示形状で出力します。かがり糸は1×＝直径0.5 mm、STLは24 MB未満です。';
+    boundaryStlBtn.disabled=!planar;
+    boundaryStlBtn.style.opacity=planar?'1':'.45';
+    displayModeHint.textContent=planar?'SVG・地割りSTL・かがり糸STLのほか「面の境界STL」で展開図の輪郭だけを別ファイルに保存できます（丸断面0.35 mm、24 MB未満）。':'STLは現在の立体表示形状で出力します。展開図の「面の境界STL」は平面表示モードで利用できます。';
   }
   function buildSceneForExport(){
     const seq=sequence(),scene=[];
@@ -1538,6 +1542,7 @@
   }
   const STL_KAGARI_BASE_DIAMETER_MM=.5;
   const STL_DIVISION_DIAMETER_MM=.35;
+  const STL_BOUNDARY_DIAMETER_MM=.35;
   // Compact binary STL: 50 bytes per triangle instead of hundreds for ASCII STL.
   // Keep the *entire* download below 25,000,000 bytes, including its header.
   const STL_MAX_BYTES=24000000;
@@ -1608,8 +1613,8 @@
     const merged=a.slice(0,-1).concat(b);
     return merged.length>=4?merged:pts;
   }
-  function prepareStlPaths(pathSpecs,sphereRadiusMm){
-    const original=viewStlPaths(pathSpecs).map(spec=>({...spec,points:cleanStlPath(spec.points)}))
+  function prepareStlPaths(pathSpecs,sphereRadiusMm,alreadyInDisplayCoordinates=false){
+    const original=(alreadyInDisplayCoordinates?pathSpecs:viewStlPaths(pathSpecs)).map(spec=>({...spec,points:cleanStlPath(spec.points)}))
       .filter(spec=>spec.points.length>=2);
     let paths=original,ringSides=STL_RING_SIDES;
     const budget=Math.floor((STL_MAX_BYTES-84)/50);
@@ -1755,13 +1760,88 @@
     }
     return out;
   }
-  function buildStlForPaths(name,pathSpecs){
+  function buildStlForPaths(name,pathSpecs,alreadyInDisplayCoordinates=false){
     const sphereRadiusMm=Math.max(1,(Number(state.diameterCm)||5)*5);
-    const {paths,ringSides,maximumFacets}=prepareStlPaths(pathSpecs,sphereRadiusMm);
+    const {paths,ringSides,maximumFacets}=prepareStlPaths(pathSpecs,sphereRadiusMm,alreadyInDisplayCoordinates);
     const writer=createBinaryStlWriter(name,maximumFacets);
     for(const spec of paths)tubePathToStl(writer,spec.points,spec.diameterMm,sphereRadiusMm,ringSides);
     writer.view.setUint32(80,writer.triangles,true);
     return new Uint8Array(writer.buffer,0,writer.offset);
+  }
+  // Export the *outlines* drawn in the currently selected flat view. These are
+  // 2D layout coordinates already; never re-project them through a spherical map.
+  // Every polygon face contributes all its boundary edges, with coincident edges
+  // merged so connected faces do not create duplicate overlapping STL tubes.
+  function buildFlatBoundaryStlPaths(mode=state.displayMode){
+    if(!isFlatStlMode(mode))return [];
+    const paths=[],seenEdges=new Set(),radius=STL_BOUNDARY_DIAMETER_MM;
+    const edgeKey=(a,b)=>{
+      const key=p=>`${Math.round(p.x*1e6)},${Math.round(p.y*1e6)}`;
+      const ka=key(a),kb=key(b);
+      return ka<kb?`${ka}|${kb}`:`${kb}|${ka}`;
+    };
+    const addPolygon=(pts)=>{
+      for(let i=0;i<pts.length;i++){
+        const a=pts[i],b=pts[(i+1)%pts.length];
+        if(len(sub(a,b))<1e-8)continue;
+        const key=edgeKey(a,b);
+        if(seenEdges.has(key))continue;
+        seenEdges.add(key);
+        paths.push({points:[a,b],diameterMm:radius});
+      }
+    };
+    const facePoints=(net)=>{
+      const offsetX=(net.bounds.minX+net.bounds.maxX)/2;
+      const offsetY=(net.bounds.minY+net.bounds.maxY)/2;
+      for(const face of net.faces){
+        addPolygon(face.pts.map(p=>V(p.x-offsetX,p.y-offsetY,0)));
+      }
+    };
+    if(mode==='icoNet')facePoints(icoNet);
+    else if(mode==='truncNet')facePoints(truncNet);
+    else if(mode==='dodeNet')facePoints(dodeNet);
+    else if(mode==='gore'){
+      // Exactly the same curved 72-step gore contours drawn on the canvas.
+      const n=divisionCountForKey(),span=2*Math.PI/n,strip=span*1.18;
+      for(let g=0;g<n;g++){
+        const cx=(g-n/2+.5)*strip,loop=[];
+        for(let i=0;i<=72;i++){
+          const lat=-Math.PI/2+i*Math.PI/72;
+          loop.push(V(cx-Math.max(.02,Math.cos(lat)*span*.47),lat,0));
+        }
+        for(let i=72;i>=0;i--){
+          const lat=-Math.PI/2+i*Math.PI/72;
+          loop.push(V(cx+Math.max(.02,Math.cos(lat)*span*.47),lat,0));
+        }
+        // Closed polyline produces a continuous, capped-free outline per gore.
+        loop.push(loop[0]);
+        paths.push({points:loop,diameterMm:radius});
+      }
+    }else if(mode==='ortho'){
+      for(const hemi of ['N','S']){
+        const loop=[];
+        for(let i=0;i<144;i++){
+          const angle=2*Math.PI*i/144;
+          loop.push(V(orthoCenterX(hemi)+Math.cos(angle),Math.sin(angle),0));
+        }
+        loop.push(loop[0]);
+        paths.push({points:loop,diameterMm:radius});
+      }
+    }else if(mode==='plane'){
+      const b=planeBounds(),w=b.width/2,h=b.height/2;
+      addPolygon([V(-w,-h,0),V(w,-h,0),V(w,h,0),V(-w,h,0)]);
+    }
+    return paths;
+  }
+  function exportFlatBoundarySTL(){
+    if(!isFlatStlMode())return;
+    try{
+      const paths=buildFlatBoundaryStlPaths();
+      if(!paths.length)throw new Error('展開図の境界線がありません');
+      const name=`temari_${state.key}_${state.displayMode}_face_boundaries`;
+      // This is already in display layout space, so bypass viewStlPaths().
+      downloadBinaryFile(`${name}.stl`,buildStlForPaths(name,paths,true));
+    }catch(error){console.error(error);alert(`面の境界STLの出力に失敗しました：${error.message}`);}
   }
   function exportDivisionSTL(){
     try{
@@ -3058,6 +3138,7 @@
   svgExportBtn.addEventListener('click',exportCurrentSVG);
   divisionStlBtn.addEventListener('click',exportDivisionSTL);
   kagariStlBtn.addEventListener('click',exportKagariSTL);
+  boundaryStlBtn.addEventListener('click',exportFlatBoundarySTL);
   kagariGcodeBtn.addEventListener('click',exportKagariGcode);
   threadRenderMode.addEventListener('change',e=>{state.threadRender=e.target.value;updateThreadControlState()});
   realisticMaterialMode.addEventListener('change',e=>state.realisticMaterial=e.target.value);
