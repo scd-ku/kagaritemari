@@ -447,7 +447,7 @@
       <button id="divisionStlBtn" type="button">地割りSTL</button>
       <button id="kagariStlBtn" type="button">かがり糸STL</button>
     </div>
-    <p class="small" id="displayModeHint">平面表示ではSVG出力できます。STLは表示モードに関係なく選択図案の完成形を出力します。かがり糸は1×＝直径0.5 mmです。</p>
+    <p class="small" id="displayModeHint">STLは現在の表示モードの完成図案を出力します。展開図では平面状に配置し、糸の直径は1×＝0.5 mmです。</p>
     <div id="meta">
       <div class="row tight" style="margin-top:0"><span id="fidelityBadge" class="badge"></span><span id="divisionBadge" class="badge"></span></div>
       <p id="patternIntro"></p>
@@ -606,7 +606,7 @@
           <li>糸色・太さ・線種を共通または糸ごとに設定でき、リアリスティック3D素材も選択できます。</li>
           <li>手まり直径から地割り糸とかがり糸の幾何学的な経路長を推定します。</li>
           <li>平面系の表示モードはSVGとして出力できます。</li>
-          <li>地割り線とかがり糸はSTLとして出力できます。かがり糸は1×＝直径0.5 mmの丸断面チューブで、太さ倍率に連動します。</li>
+          <li>地割り線とかがり糸はSTLとして出力できます。立体表示は3D形状、展開平面図は面上の丸断面チューブとして出力し、面境界は切断します。かがり糸は1×＝直径0.5 mmで太さ倍率に連動します。</li>
           <li>各図案には参照した手まり技法・図案サイトへのリンクがあります。</li>
         </ul>
       </div>
@@ -1525,7 +1525,7 @@
     const planar=state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet'||state.displayMode==='ortho';
     svgExportBtn.disabled=!planar;
     svgExportBtn.style.opacity=planar?'1':'.45';
-    displayModeHint.textContent=planar?'平面表示ではSVG出力できます。STLは選択図案の完成形です。かがり糸径は1×＝0.5 mmです。':'3D表示ではSVG出力はできません。STLは選択図案の完成形です。かがり糸径は1×＝0.5 mmです。';
+    displayModeHint.textContent=planar?'SVG・STLは現在の展開平面図に合わせて出力します。STLの糸はXY平面上の丸断面です（1×＝直径0.5 mm）。':'STLは現在の立体表示形状で出力します。かがり糸は1×＝直径0.5 mmです。';
   }
   function buildSceneForExport(){
     const seq=sequence(),scene=[];
@@ -1593,14 +1593,82 @@
       }
     }
   }
+  // STL shape is derived from the selected display mode, NOT always the sphere.
+  // Geometric coordinates use the real temari radius, while the view rotation,
+  // zoom and pan never change the exported dimensions (all lengths in mm).
+  function isFlatStlMode(mode=state.displayMode){
+    return ['plane','gore','icoNet','truncNet','dodeNet','ortho'].includes(mode);
+  }
+  function stlFlatBounds(mode=state.displayMode){
+    if(mode==='plane')return planeBounds();
+    if(mode==='gore')return goreBounds();
+    if(mode==='ortho')return orthoBounds();
+    if(mode==='icoNet')return {width:icoNet.bounds.width,height:icoNet.bounds.height};
+    if(mode==='truncNet')return {width:truncNet.bounds.width,height:truncNet.bounds.height};
+    if(mode==='dodeNet')return {width:dodeNet.bounds.width,height:dodeNet.bounds.height};
+    throw new Error(`Unsupported flat STL mode: ${mode}`);
+  }
+  function flatStlScreenScale(){
+    const b=stlFlatBounds();
+    return Math.min(canvas.clientWidth*.88/(b.width||1),canvas.clientHeight*.78/(b.height||1))*state.zoom;
+  }
+  function screenPointToFlatStl(q,screenScale){
+    // Inverse of projectLocal2D: screen px -> print layout coordinates.
+    return V((q.x-canvas.clientWidth/2-state.panX)/screenScale,
+             (canvas.clientHeight/2+state.panY-q.y)/screenScale,0);
+  }
+  function denseStlFlatPath(points){
+    // Subdivision ensures a stroke meets a seam near its true point of crossing,
+    // including for long arcs or low-resolution source stitch paths.
+    const out=[];
+    if(!points||!points.length)return out;
+    out.push(points[0]);
+    for(let i=1;i<points.length;i++){
+      const a=points[i-1],b=points[i],angle=Math.acos(clamp(dot(norm(a),norm(b)),-1,1));
+      const divisions=Math.max(1,Math.min(256,Math.ceil(angle/.012)));
+      for(let j=1;j<=divisions;j++)out.push(j===divisions?b:sphereInterp(a,b,j/divisions));
+    }
+    return out;
+  }
+  function flatStlPathParts(points){
+    // polySegments is also the screen/SVG boundary splitter. Reuse its exact
+    // seam intersections: never join separate net pieces with an STL bridge.
+    const source=denseStlFlatPath(points),segments=polySegments(source,'#777777',1,1,1,null,'stl'),sc=flatStlScreenScale();
+    const parts=[];let active=[];
+    const flush=()=>{if(active.length>1)parts.push(active);active=[];};
+    const tolerance=1e-4;
+    for(const segment of segments){
+      const a=screenPointToFlatStl(segment.a,sc),b=screenPointToFlatStl(segment.b,sc);
+      if(len(sub(a,b))<1e-7)continue;
+      if(active.length&&len(sub(active[active.length-1],a))>tolerance)flush();
+      if(!active.length)active.push(a);
+      active.push(b);
+    }
+    flush();
+    return parts;
+  }
+  function viewStlPaths(pathSpecs){
+    const out=[];
+    for(const spec of pathSpecs){
+      if(isFlatStlMode()){
+        for(const part of flatStlPathParts(spec.points))out.push({...spec,points:part});
+      }else{
+        const map=state.displayMode==='ico3d'?mapPointToIcosahedron:
+          state.displayMode==='trunc3d'?mapPointToTruncated:
+          state.displayMode==='dode3d'?mapPointToDodecahedron:(p=>p);
+        out.push({...spec,points:spec.points.map(map)});
+      }
+    }
+    return out;
+  }
   function buildStlForPaths(name,pathSpecs){
     const out=[`solid ${name}`],sphereRadiusMm=Math.max(1,(Number(state.diameterCm)||5)*5);
-    for(const spec of pathSpecs)tubePathToStl(out,spec.points,spec.diameterMm,sphereRadiusMm);
+    for(const spec of viewStlPaths(pathSpecs))tubePathToStl(out,spec.points,spec.diameterMm,sphereRadiusMm);
     out.push(`endsolid ${name}`);return out.join('\n');
   }
   function exportDivisionSTL(){
     const p=currentPattern(),paths=(p.divisionSteps||[]).map(s=>({points:s.points,diameterMm:STL_DIVISION_DIAMETER_MM}));
-    const name=`temari_${state.key}_jiwari`;downloadTextFile(`${name}.stl`,buildStlForPaths(name,paths),'model/stl');
+    const name=`temari_${state.key}_${state.displayMode}_jiwari`;downloadTextFile(`${name}.stl`,buildStlForPaths(name,paths),'model/stl');
   }
   function exportKagariSTL(){
     const p=currentPattern(),paths=[];
@@ -1609,7 +1677,7 @@
       const mul=state.threadColor==='custom'?threadWidthFor(s.color):state.threadWidth;
       paths.push({points:renderPointsForStep(s),diameterMm:STL_KAGARI_BASE_DIAMETER_MM*Math.max(.1,Number(mul)||1)});
     }
-    const name=`temari_${state.key}_kagari`;downloadTextFile(`${name}.stl`,buildStlForPaths(name,paths),'model/stl');
+    const name=`temari_${state.key}_${state.displayMode}_kagari`;downloadTextFile(`${name}.stl`,buildStlForPaths(name,paths),'model/stl');
   }
   function exportCurrentSVG(){
     if(!(state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet'||state.displayMode==='ortho')) return;
