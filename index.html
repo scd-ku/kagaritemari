@@ -447,7 +447,7 @@
       <button id="divisionStlBtn" type="button">地割りSTL</button>
       <button id="kagariStlBtn" type="button">かがり糸STL</button>
     </div>
-    <p class="small" id="displayModeHint">STLは現在の表示モードの完成図案を出力します。展開図では平面状に配置し、糸の直径は1×＝0.5 mmです。</p>
+    <p class="small" id="displayModeHint">STLは現在の表示モードの完成図案をバイナリ形式（24 MB未満）で出力します。展開図では平面状に配置し、糸の直径は1×＝0.5 mmです。</p>
     <div id="meta">
       <div class="row tight" style="margin-top:0"><span id="fidelityBadge" class="badge"></span><span id="divisionBadge" class="badge"></span></div>
       <p id="patternIntro"></p>
@@ -1525,7 +1525,7 @@
     const planar=state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet'||state.displayMode==='ortho';
     svgExportBtn.disabled=!planar;
     svgExportBtn.style.opacity=planar?'1':'.45';
-    displayModeHint.textContent=planar?'SVG・STLは現在の展開平面図に合わせて出力します。STLの糸はXY平面上の丸断面です（1×＝直径0.5 mm）。':'STLは現在の立体表示形状で出力します。かがり糸は1×＝直径0.5 mmです。';
+    displayModeHint.textContent=planar?'SVG・STLは現在の展開平面図に合わせて出力します。STLは24 MB未満のバイナリ形式です。糸はXY平面上の丸断面です（1×＝直径0.5 mm）。':'STLは現在の立体表示形状で出力します。かがり糸は1×＝直径0.5 mm、STLは24 MB未満です。';
   }
   function buildSceneForExport(){
     const seq=sequence(),scene=[];
@@ -1535,16 +1535,32 @@
   }
   const STL_KAGARI_BASE_DIAMETER_MM=.5;
   const STL_DIVISION_DIAMETER_MM=.35;
+  // Compact binary STL: 50 bytes per triangle instead of hundreds for ASCII STL.
+  // Keep the *entire* download below 25,000,000 bytes, including its header.
+  const STL_MAX_BYTES=24000000;
   const STL_RING_SIDES=16;
   function downloadTextFile(filename,textValue,mime='text/plain;charset=utf-8'){
     const blob=new Blob([textValue],{type:mime}),url=URL.createObjectURL(blob),a=document.createElement('a');
     a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1400);
   }
-  function stlVec(v){return `${v.x.toFixed(6)} ${v.y.toFixed(6)} ${v.z.toFixed(6)}`;}
-  function stlFacet(out,a,b,c){
-    const nRaw=cross(sub(b,a),sub(c,a)),ll=len(nRaw);if(!Number.isFinite(ll)||ll<1e-10)return;
-    const n=scale(nRaw,1/ll);
-    out.push(`facet normal ${stlVec(n)}\n outer loop\n  vertex ${stlVec(a)}\n  vertex ${stlVec(b)}\n  vertex ${stlVec(c)}\n endloop\nendfacet`);
+  function downloadBinaryFile(filename,bytes,mime='model/stl'){
+    const blob=new Blob([bytes],{type:mime}),url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1400);
+  }
+  function createBinaryStlWriter(name,maximumFacets){
+    const buffer=new ArrayBuffer(84+50*maximumFacets),view=new DataView(buffer);
+    const header=`Temari Kagari binary STL - ${name}`;
+    for(let i=0;i<Math.min(80,header.length);i++)view.setUint8(i,header.charCodeAt(i)&255);
+    return{buffer,view,offset:84,triangles:0};
+  }
+  function stlFacet(writer,a,b,c){
+    const nRaw=cross(sub(b,a),sub(c,a)),ll=len(nRaw);
+    if(!Number.isFinite(ll)||ll<1e-10)return;
+    if(writer.offset+50>writer.buffer.byteLength)throw new Error('STL容量制限を超えました');
+    const n=scale(nRaw,1/ll),v=writer.view;let o=writer.offset;
+    for(const p of [n,a,b,c])for(const val of [p.x,p.y,p.z]){v.setFloat32(o,val,true);o+=4;}
+    v.setUint16(o,0,true);
+    writer.offset+=50;writer.triangles++;
   }
   function cleanStlPath(points){
     const out=[];
@@ -1554,10 +1570,85 @@
     }
     return out;
   }
-  function tubePathToStl(out,points,diameterMm,sphereRadiusMm){
-    let pts=cleanStlPath(points);if(pts.length<2)return;
-    let closed=len(sub(pts[0],pts[pts.length-1]))<1e-4;
-    if(closed&&pts.length>2)pts=pts.slice(0,-1);
+  function stlPathIsClosed(pts){return pts.length>2&&len(sub(pts[0],pts[pts.length-1]))<1e-4;}
+  function stlPointCount(pts){return pts.length-(stlPathIsClosed(pts)?1:0);}
+  function stlPerpendicularDistance(p,a,b){
+    const ab=sub(b,a),l2=dot(ab,ab);
+    if(l2<1e-16)return len(sub(p,a));
+    return len(sub(p,add(a,scale(ab,clamp(dot(sub(p,a),ab)/l2,0,1)))));
+  }
+  function simplifyStlOpenPath(pts,tolerance){
+    if(pts.length<=2)return pts;
+    const keep=new Uint8Array(pts.length),stack=[[0,pts.length-1]];
+    keep[0]=1;keep[pts.length-1]=1;
+    while(stack.length){
+      const [a,b]=stack.pop();if(b-a<=1)continue;
+      // Bound worst-case work for a long zigzag, where ordinary RDP can be O(n²).
+      if(b-a>256){const mid=(a+b)>>1;keep[mid]=1;stack.push([a,mid],[mid,b]);continue;}
+      let largest=0,pick=-1;
+      for(let i=a+1;i<b;i++){
+        const distance=stlPerpendicularDistance(pts[i],pts[a],pts[b]);
+        if(distance>largest){largest=distance;pick=i;}
+      }
+      if(largest>tolerance&&pick>=0){keep[pick]=1;stack.push([a,pick],[pick,b]);}
+    }
+    return pts.filter((_,i)=>keep[i]);
+  }
+  function simplifyStlPath(pts,tolerance){
+    if(pts.length<=3)return pts;
+    if(!stlPathIsClosed(pts))return simplifyStlOpenPath(pts,tolerance);
+    // Split a closed loop into two arcs before simplifying, so the closing
+    // chord cannot collapse the loop to a point.
+    const loop=pts.slice(0,-1),mid=Math.floor(loop.length/2);
+    const a=simplifyStlOpenPath(loop.slice(0,mid+1),tolerance);
+    const b=simplifyStlOpenPath(loop.slice(mid).concat([loop[0]]),tolerance);
+    const merged=a.slice(0,-1).concat(b);
+    return merged.length>=4?merged:pts;
+  }
+  function prepareStlPaths(pathSpecs,sphereRadiusMm){
+    const original=viewStlPaths(pathSpecs).map(spec=>({...spec,points:cleanStlPath(spec.points)}))
+      .filter(spec=>spec.points.length>=2);
+    let paths=original,ringSides=STL_RING_SIDES;
+    const budget=Math.floor((STL_MAX_BYTES-84)/50);
+    const faceCount=(parts,sides)=>parts.reduce((total,p)=>total+2*sides*stlPointCount(p.points),0);
+    // Preserve all path features when possible. Reduce only tessellation first;
+    // then use a bounded 3D curve error (in mm) if the pattern is exceptionally dense.
+    if(faceCount(paths,ringSides)>budget)ringSides=12;
+    if(faceCount(paths,ringSides)>budget){
+      for(const mm of [.025,.05,.1,.2,.4,.8,1.6,3.2,6.4,12.8]){
+        const t=mm/sphereRadiusMm;
+        paths=original.map(spec=>({...spec,points:simplifyStlPath(spec.points,t)}));
+        if(faceCount(paths,ringSides)<=budget)break;
+      }
+    }
+    if(faceCount(paths,ringSides)>budget)ringSides=8;
+    if(faceCount(paths,ringSides)>budget){
+      // Absolute budget fallback, with endpoints retained on every open path.
+      // This also bounds file size for diagrams with extremely dense coordinates.
+      const target=Math.floor(budget/(2*ringSides));
+      let step=Math.max(2,Math.ceil(paths.reduce((n,p)=>n+stlPointCount(p.points),0)/target));
+      for(let attempt=0;attempt<20;attempt++,step++){
+        paths=paths.map(spec=>{
+          const pts=spec.points,closed=stlPathIsClosed(pts),body=closed?pts.slice(0,-1):pts;
+          if(body.length<=3)return spec;
+          const next=[body[0]];
+          for(let i=step;i<body.length-1;i+=step)next.push(body[i]);
+          next.push(body[body.length-1]);
+          if(closed)next.push(body[0]);
+          return {...spec,points:next};
+        });
+        if(faceCount(paths,ringSides)<=budget)break;
+      }
+    }
+    if(faceCount(paths,ringSides)>budget){
+      throw new Error('糸の本数が多く、24 MBのSTLに収められませんでした。図案を分割して出力してください。');
+    }
+    return{paths,ringSides,maximumFacets:faceCount(paths,ringSides)};
+  }
+  function tubePathToStl(writer,points,diameterMm,sphereRadiusMm,ringSides){
+    let pts=points;if(pts.length<2)return;
+    const closed=stlPathIsClosed(pts);
+    if(closed)pts=pts.slice(0,-1);
     if(pts.length<2)return;
     const radius=Math.max(.02,diameterMm/2),rings=[];let prevU=null;
     for(let i=0;i<pts.length;i++){
@@ -1572,8 +1663,8 @@
       u=norm(u);let v=norm(cross(t,u));
       if(prevU&&dot(u,prevU)<0){u=scale(u,-1);v=scale(v,-1);}prevU=u;
       const ring=[];
-      for(let k=0;k<STL_RING_SIDES;k++){
-        const a=2*Math.PI*k/STL_RING_SIDES;
+      for(let k=0;k<ringSides;k++){
+        const a=2*Math.PI*k/ringSides;
         ring.push(add(pm,add(scale(u,Math.cos(a)*radius),scale(v,Math.sin(a)*radius))));
       }
       rings.push(ring);
@@ -1581,15 +1672,15 @@
     const pairCount=closed?rings.length:rings.length-1;
     for(let i=0;i<pairCount;i++){
       const j=(i+1)%rings.length;
-      for(let k=0;k<STL_RING_SIDES;k++){
-        const k2=(k+1)%STL_RING_SIDES,a=rings[i][k],b=rings[j][k],c=rings[j][k2],d=rings[i][k2];
-        stlFacet(out,a,b,c);stlFacet(out,a,c,d);
+      for(let k=0;k<ringSides;k++){
+        const k2=(k+1)%ringSides,a=rings[i][k],b=rings[j][k],c=rings[j][k2],d=rings[i][k2];
+        stlFacet(writer,a,b,c);stlFacet(writer,a,c,d);
       }
     }
     if(!closed){
       const c0=scale(pts[0],sphereRadiusMm),c1=scale(pts[pts.length-1],sphereRadiusMm);
-      for(let k=0;k<STL_RING_SIDES;k++){
-        const k2=(k+1)%STL_RING_SIDES;stlFacet(out,c0,rings[0][k2],rings[0][k]);stlFacet(out,c1,rings[rings.length-1][k],rings[rings.length-1][k2]);
+      for(let k=0;k<ringSides;k++){
+        const k2=(k+1)%ringSides;stlFacet(writer,c0,rings[0][k2],rings[0][k]);stlFacet(writer,c1,rings[rings.length-1][k],rings[rings.length-1][k2]);
       }
     }
   }
@@ -1662,22 +1753,31 @@
     return out;
   }
   function buildStlForPaths(name,pathSpecs){
-    const out=[`solid ${name}`],sphereRadiusMm=Math.max(1,(Number(state.diameterCm)||5)*5);
-    for(const spec of viewStlPaths(pathSpecs))tubePathToStl(out,spec.points,spec.diameterMm,sphereRadiusMm);
-    out.push(`endsolid ${name}`);return out.join('\n');
+    const sphereRadiusMm=Math.max(1,(Number(state.diameterCm)||5)*5);
+    const {paths,ringSides,maximumFacets}=prepareStlPaths(pathSpecs,sphereRadiusMm);
+    const writer=createBinaryStlWriter(name,maximumFacets);
+    for(const spec of paths)tubePathToStl(writer,spec.points,spec.diameterMm,sphereRadiusMm,ringSides);
+    writer.view.setUint32(80,writer.triangles,true);
+    return new Uint8Array(writer.buffer,0,writer.offset);
   }
   function exportDivisionSTL(){
-    const p=currentPattern(),paths=(p.divisionSteps||[]).map(s=>({points:s.points,diameterMm:STL_DIVISION_DIAMETER_MM}));
-    const name=`temari_${state.key}_${state.displayMode}_jiwari`;downloadTextFile(`${name}.stl`,buildStlForPaths(name,paths),'model/stl');
+    try{
+      const p=currentPattern(),paths=(p.divisionSteps||[]).map(s=>({points:s.points,diameterMm:STL_DIVISION_DIAMETER_MM}));
+      const name=`temari_${state.key}_${state.displayMode}_jiwari`;
+      downloadBinaryFile(`${name}.stl`,buildStlForPaths(name,paths));
+    }catch(error){console.error(error);alert(`STLの出力に失敗しました：${error.message}`);}
   }
   function exportKagariSTL(){
-    const p=currentPattern(),paths=[];
-    for(const s of p.steps||[]){
-      if(s.kind!=='kagari')continue;
-      const mul=state.threadColor==='custom'?threadWidthFor(s.color):state.threadWidth;
-      paths.push({points:renderPointsForStep(s),diameterMm:STL_KAGARI_BASE_DIAMETER_MM*Math.max(.1,Number(mul)||1)});
-    }
-    const name=`temari_${state.key}_${state.displayMode}_kagari`;downloadTextFile(`${name}.stl`,buildStlForPaths(name,paths),'model/stl');
+    try{
+      const p=currentPattern(),paths=[];
+      for(const s of p.steps||[]){
+        if(s.kind!=='kagari')continue;
+        const mul=state.threadColor==='custom'?threadWidthFor(s.color):state.threadWidth;
+        paths.push({points:renderPointsForStep(s),diameterMm:STL_KAGARI_BASE_DIAMETER_MM*Math.max(.1,Number(mul)||1)});
+      }
+      const name=`temari_${state.key}_${state.displayMode}_kagari`;
+      downloadBinaryFile(`${name}.stl`,buildStlForPaths(name,paths));
+    }catch(error){console.error(error);alert(`STLの出力に失敗しました：${error.message}`);}
   }
   function exportCurrentSVG(){
     if(!(state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet'||state.displayMode==='ortho')) return;
