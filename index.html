@@ -444,8 +444,10 @@
         <option value="ortho">10. 正射図法（北半球・南半球）</option>
       </select>
       <button id="svgExportBtn" type="button">SVG出力</button>
+      <button id="divisionStlBtn" type="button">地割りSTL</button>
+      <button id="kagariStlBtn" type="button">かがり糸STL</button>
     </div>
-    <p class="small" id="displayModeHint">平面表示ではSVG出力できます。</p>
+    <p class="small" id="displayModeHint">平面表示ではSVG出力できます。STLは表示モードに関係なく選択図案の完成形を出力します。かがり糸は1×＝直径0.5 mmです。</p>
     <div id="meta">
       <div class="row tight" style="margin-top:0"><span id="fidelityBadge" class="badge"></span><span id="divisionBadge" class="badge"></span></div>
       <p id="patternIntro"></p>
@@ -532,7 +534,7 @@
       </div>
       <div id="commonWidthRow" class="row width-row common-thread-setting">
         <label for="threadWidthRange">共通の糸の太さ</label>
-        <input id="threadWidthRange" type="range" min="0.4" max="3.0" step="0.1" value="1.0">
+        <input id="threadWidthRange" type="range" min="0.4" max="10.0" step="0.1" value="1.0">
         <span id="threadWidthValue" class="width-value">1.0×</span>
       </div>
       <div id="commonDisabledNotice">個別設定中です。共通の基本色・線種・太さ・リアリスティック素材は無効です。各糸に、共通設定と同じ4種類の線種と太さ・素材を個別指定してください。</div>
@@ -604,6 +606,7 @@
           <li>糸色・太さ・線種を共通または糸ごとに設定でき、リアリスティック3D素材も選択できます。</li>
           <li>手まり直径から地割り糸とかがり糸の幾何学的な経路長を推定します。</li>
           <li>平面系の表示モードはSVGとして出力できます。</li>
+          <li>地割り線とかがり糸はSTLとして出力できます。かがり糸は1×＝直径0.5 mmの丸断面チューブで、太さ倍率に連動します。</li>
           <li>各図案には参照した手まり技法・図案サイトへのリンクがあります。</li>
         </ul>
       </div>
@@ -654,7 +657,7 @@
   const qrLaunchBtn=document.getElementById('qrLaunchBtn'),qrDialog=document.getElementById('qrDialog'),qrDialogClose=document.getElementById('qrDialogClose');
   const appHelpBtn=document.getElementById('appHelpBtn'),appHelpDialog=document.getElementById('appHelpDialog'),appHelpClose=document.getElementById('appHelpClose');
   const diameterCm=document.getElementById('diameterCm'),threadLengthSummary=document.getElementById('threadLengthSummary');
-  const displayModeSelect=document.getElementById('displayModeSelect'),svgExportBtn=document.getElementById('svgExportBtn'),displayModeHint=document.getElementById('displayModeHint');
+  const displayModeSelect=document.getElementById('displayModeSelect'),svgExportBtn=document.getElementById('svgExportBtn'),divisionStlBtn=document.getElementById('divisionStlBtn'),kagariStlBtn=document.getElementById('kagariStlBtn'),displayModeHint=document.getElementById('displayModeHint');
 
   // ---------- vector / spherical utilities ----------
   const V=(x,y,z)=>({x,y,z});
@@ -1522,13 +1525,91 @@
     const planar=state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet'||state.displayMode==='ortho';
     svgExportBtn.disabled=!planar;
     svgExportBtn.style.opacity=planar?'1':'.45';
-    displayModeHint.textContent=planar?'平面表示ではSVG出力できます。':'3D表示ではSVG出力はできません。';
+    displayModeHint.textContent=planar?'平面表示ではSVG出力できます。STLは選択図案の完成形です。かがり糸径は1×＝0.5 mmです。':'3D表示ではSVG出力はできません。STLは選択図案の完成形です。かがり糸径は1×＝0.5 mmです。';
   }
   function buildSceneForExport(){
     const seq=sequence(),scene=[];
     for(const s of finished){ if(s.kind==='division'){ if(state.showGuides) scene.push(...polySegments(s.points,state.divisionColor,1.55,1,1,null,'division')); } else if(s.kind==='kagari'){ scene.push(...polySegments(renderPointsForStep(s),s.color,2.7,1,1,null,'thread')); } }
     if(state.stepIndex<seq.length){ const step=seq[state.stepIndex]; if(step&&step.kind!=='core'){ let pts=computeDisplayedThread(step,state.stepProgress).points; pts=applyStitchDepth(pts,step,state.stepProgress); if(step.kind==='division'&&state.showGuides) scene.push(...polySegments(pts,state.divisionColor,2.65,1,1,null,'division')); if(step.kind==='kagari') scene.push(...polySegments(pts,step.color,4.1,1,1,null,'thread')); }}
     return scene;
+  }
+  const STL_KAGARI_BASE_DIAMETER_MM=.5;
+  const STL_DIVISION_DIAMETER_MM=.35;
+  const STL_RING_SIDES=16;
+  function downloadTextFile(filename,textValue,mime='text/plain;charset=utf-8'){
+    const blob=new Blob([textValue],{type:mime}),url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1400);
+  }
+  function stlVec(v){return `${v.x.toFixed(6)} ${v.y.toFixed(6)} ${v.z.toFixed(6)}`;}
+  function stlFacet(out,a,b,c){
+    const nRaw=cross(sub(b,a),sub(c,a)),ll=len(nRaw);if(!Number.isFinite(ll)||ll<1e-10)return;
+    const n=scale(nRaw,1/ll);
+    out.push(`facet normal ${stlVec(n)}\n outer loop\n  vertex ${stlVec(a)}\n  vertex ${stlVec(b)}\n  vertex ${stlVec(c)}\n endloop\nendfacet`);
+  }
+  function cleanStlPath(points){
+    const out=[];
+    for(const p of points||[]){
+      if(!p||![p.x,p.y,p.z].every(Number.isFinite))continue;
+      if(!out.length||len(sub(p,out[out.length-1]))>1e-6)out.push(V(p.x,p.y,p.z));
+    }
+    return out;
+  }
+  function tubePathToStl(out,points,diameterMm,sphereRadiusMm){
+    let pts=cleanStlPath(points);if(pts.length<2)return;
+    let closed=len(sub(pts[0],pts[pts.length-1]))<1e-4;
+    if(closed&&pts.length>2)pts=pts.slice(0,-1);
+    if(pts.length<2)return;
+    const radius=Math.max(.02,diameterMm/2),rings=[];let prevU=null;
+    for(let i=0;i<pts.length;i++){
+      const pm=scale(pts[i],sphereRadiusMm);
+      let t;
+      if(closed)t=norm(sub(pts[(i+1)%pts.length],pts[(i-1+pts.length)%pts.length]));
+      else if(i===0)t=norm(sub(pts[1],pts[0]));
+      else if(i===pts.length-1)t=norm(sub(pts[i],pts[i-1]));
+      else t=norm(sub(pts[i+1],pts[i-1]));
+      let u=norm(pm);u=sub(u,scale(t,dot(u,t)));
+      if(len(u)<1e-5){const ref=Math.abs(t.y)<.85?V(0,1,0):V(1,0,0);u=cross(t,ref);}
+      u=norm(u);let v=norm(cross(t,u));
+      if(prevU&&dot(u,prevU)<0){u=scale(u,-1);v=scale(v,-1);}prevU=u;
+      const ring=[];
+      for(let k=0;k<STL_RING_SIDES;k++){
+        const a=2*Math.PI*k/STL_RING_SIDES;
+        ring.push(add(pm,add(scale(u,Math.cos(a)*radius),scale(v,Math.sin(a)*radius))));
+      }
+      rings.push(ring);
+    }
+    const pairCount=closed?rings.length:rings.length-1;
+    for(let i=0;i<pairCount;i++){
+      const j=(i+1)%rings.length;
+      for(let k=0;k<STL_RING_SIDES;k++){
+        const k2=(k+1)%STL_RING_SIDES,a=rings[i][k],b=rings[j][k],c=rings[j][k2],d=rings[i][k2];
+        stlFacet(out,a,b,c);stlFacet(out,a,c,d);
+      }
+    }
+    if(!closed){
+      const c0=scale(pts[0],sphereRadiusMm),c1=scale(pts[pts.length-1],sphereRadiusMm);
+      for(let k=0;k<STL_RING_SIDES;k++){
+        const k2=(k+1)%STL_RING_SIDES;stlFacet(out,c0,rings[0][k2],rings[0][k]);stlFacet(out,c1,rings[rings.length-1][k],rings[rings.length-1][k2]);
+      }
+    }
+  }
+  function buildStlForPaths(name,pathSpecs){
+    const out=[`solid ${name}`],sphereRadiusMm=Math.max(1,(Number(state.diameterCm)||5)*5);
+    for(const spec of pathSpecs)tubePathToStl(out,spec.points,spec.diameterMm,sphereRadiusMm);
+    out.push(`endsolid ${name}`);return out.join('\n');
+  }
+  function exportDivisionSTL(){
+    const p=currentPattern(),paths=(p.divisionSteps||[]).map(s=>({points:s.points,diameterMm:STL_DIVISION_DIAMETER_MM}));
+    const name=`temari_${state.key}_jiwari`;downloadTextFile(`${name}.stl`,buildStlForPaths(name,paths),'model/stl');
+  }
+  function exportKagariSTL(){
+    const p=currentPattern(),paths=[];
+    for(const s of p.steps||[]){
+      if(s.kind!=='kagari')continue;
+      const mul=state.threadColor==='custom'?threadWidthFor(s.color):state.threadWidth;
+      paths.push({points:renderPointsForStep(s),diameterMm:STL_KAGARI_BASE_DIAMETER_MM*Math.max(.1,Number(mul)||1)});
+    }
+    const name=`temari_${state.key}_kagari`;downloadTextFile(`${name}.stl`,buildStlForPaths(name,paths),'model/stl');
   }
   function exportCurrentSVG(){
     if(!(state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet'||state.displayMode==='ortho')) return;
@@ -1631,7 +1712,7 @@
       const renderSel=document.createElement('select');renderSel.setAttribute('aria-label',`糸色 ${i+1} の線種`);fillThreadRenderSelect(renderSel,renders[item.key]||state.threadRender);
       const renderBox=document.createElement('span');renderBox.className='thread-render-box';const renderHelp=document.createElement('button');renderHelp.type='button';renderHelp.className='line-help-btn';renderHelp.textContent='?';renderHelp.title='この線種の手法と参考論文';renderBox.append(renderSel,renderHelp);
       const widthBox=document.createElement('span');widthBox.className='thread-width-box';
-      const widthInput=document.createElement('input');widthInput.type='range';widthInput.min='0.4';widthInput.max='3.0';widthInput.step='0.1';widthInput.value=String(widths[item.key]??state.threadWidth);widthInput.setAttribute('aria-label',`糸色 ${i+1} の太さ`);
+      const widthInput=document.createElement('input');widthInput.type='range';widthInput.min='0.4';widthInput.max='10.0';widthInput.step='0.1';widthInput.value=String(widths[item.key]??state.threadWidth);widthInput.setAttribute('aria-label',`糸色 ${i+1} の太さ`);
       const widthValue=document.createElement('span');widthValue.className='thread-width-value';widthValue.textContent=`${Number(widthInput.value).toFixed(1)}×`;widthBox.append(widthInput,widthValue);
       const dyeBtn=document.createElement('button');dyeBtn.type='button';dyeBtn.className='dye-palette-btn';dyeBtn.textContent='草木染め色辞典';
       const materialBox=document.createElement('span');materialBox.className='thread-material-box';const materialSel=document.createElement('select');materialSel.className='thread-material-select';populateRealisticSelect(materialSel,materials[item.key]||state.realisticMaterial);const materialHelp=document.createElement('button');materialHelp.type='button';materialHelp.className='material-help-btn';materialHelp.textContent='?';materialHelp.title='素材モデルの手法と参考論文';materialBox.append(materialSel,materialHelp);materialBox.hidden=renderSel.value!=='realistic';row.classList.toggle('realistic-active',renderSel.value==='realistic');
@@ -2625,6 +2706,8 @@
   threadColorMode.addEventListener('change',e=>{state.threadColor=e.target.value;updateThreadControlState();updateThreadLengthSummary()});
   displayModeSelect.addEventListener('change',e=>{state.displayMode=e.target.value;updateDisplayModeUI()});
   svgExportBtn.addEventListener('click',exportCurrentSVG);
+  divisionStlBtn.addEventListener('click',exportDivisionSTL);
+  kagariStlBtn.addEventListener('click',exportKagariSTL);
   threadRenderMode.addEventListener('change',e=>{state.threadRender=e.target.value;updateThreadControlState()});
   realisticMaterialMode.addEventListener('change',e=>state.realisticMaterial=e.target.value);
   commonMaterialHelpBtn.addEventListener('click',()=>lineMethodHelp('realistic',realisticMaterialMode.value));
