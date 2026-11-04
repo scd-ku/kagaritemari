@@ -446,8 +446,10 @@
       <button id="svgExportBtn" type="button">SVG出力</button>
       <button id="divisionStlBtn" type="button">地割りSTL</button>
       <button id="kagariStlBtn" type="button">かがり糸STL</button>
+      <button id="kagariGcodeBtn" type="button" title="かがり順にG0/G1を出力します。添付のA1 mini・PLA Basic設定で編集用G-codeを生成します">かがりG-code</button>
     </div>
-    <p class="small" id="displayModeHint">STLは現在の表示モードの完成図案をバイナリ形式（24 MB未満）で出力します。展開図では平面状に配置し、糸の直径は1×＝0.5 mmです。</p>
+    <p class="small" id="displayModeHint">STLは現在の表示モードに合わせて出力します。</p>
+    <p class="small" id="gcodeExportHint">G-codeはかがり工程順に出力します（地割り線は含みません）。A1 mini／PLA Basic・糸径0.4 mmなど添付ファイルの制御値を使用。<strong>展開図が180 mm角を超える場合はG-codeのみXYを縮小し、倍率をファイルに記録します。</strong> 実機で実行する前に必ず軌跡・衝突・支持を検証してください。</p>
     <div id="meta">
       <div class="row tight" style="margin-top:0"><span id="fidelityBadge" class="badge"></span><span id="divisionBadge" class="badge"></span></div>
       <p id="patternIntro"></p>
@@ -607,6 +609,7 @@
           <li>手まり直径から地割り糸とかがり糸の幾何学的な経路長を推定します。</li>
           <li>平面系の表示モードはSVGとして出力できます。</li>
           <li>地割り線とかがり糸はSTLとして出力できます。立体表示は3D形状、展開平面図は面上の丸断面チューブとして出力し、面境界は切断します。かがり糸は1×＝直径0.5 mmで太さ倍率に連動します。</li>
+          <li>「かがりG-code」は現在の表示モードをもとに、かがりの順番を維持したG0/G1命令を出力します。展開図の境界や手と手の間は押出しのない移動で接続します。<a href="https://scd-ku.github.io/gcodelayers/" target="_blank" rel="noopener">Gcode Layer Editor</a> に読み込んで軌跡を確認できます。</li>
           <li>各図案には参照した手まり技法・図案サイトへのリンクがあります。</li>
         </ul>
       </div>
@@ -657,7 +660,7 @@
   const qrLaunchBtn=document.getElementById('qrLaunchBtn'),qrDialog=document.getElementById('qrDialog'),qrDialogClose=document.getElementById('qrDialogClose');
   const appHelpBtn=document.getElementById('appHelpBtn'),appHelpDialog=document.getElementById('appHelpDialog'),appHelpClose=document.getElementById('appHelpClose');
   const diameterCm=document.getElementById('diameterCm'),threadLengthSummary=document.getElementById('threadLengthSummary');
-  const displayModeSelect=document.getElementById('displayModeSelect'),svgExportBtn=document.getElementById('svgExportBtn'),divisionStlBtn=document.getElementById('divisionStlBtn'),kagariStlBtn=document.getElementById('kagariStlBtn'),displayModeHint=document.getElementById('displayModeHint');
+  const displayModeSelect=document.getElementById('displayModeSelect'),svgExportBtn=document.getElementById('svgExportBtn'),divisionStlBtn=document.getElementById('divisionStlBtn'),kagariStlBtn=document.getElementById('kagariStlBtn'),kagariGcodeBtn=document.getElementById('kagariGcodeBtn'),displayModeHint=document.getElementById('displayModeHint');
 
   // ---------- vector / spherical utilities ----------
   const V=(x,y,z)=>({x,y,z});
@@ -1779,6 +1782,185 @@
       downloadBinaryFile(`${name}.stl`,buildStlForPaths(name,paths));
     }catch(error){console.error(error);alert(`STLの出力に失敗しました：${error.message}`);}
   }
+  // G-code coordinate export for scd-ku/gcodelayers.  This is an ordered
+  // toolpath, not a sliced, mechanically validated printable temari.  No false
+  // @GCE_LAYERS parametric metadata is generated: this model consists of 3D
+  // stitched open paths, not editable planar closed per-layer polygons.
+  // Machine/process parameters below are taken verbatim from the user's
+  // GcodeLayerEditor.gcode sample; stitch-specific XYZ coordinates are new.
+  const KAGARI_GCODE_PROFILE=Object.freeze({
+    machine:'a1mini',material:'pla_basic',nozzle:.4,lineWidth:.67124,
+    layerHeight:.2,flow:.98,hotend:220,bedtemp:65,mvs:21,safety:75,
+    threadDiameter:.4,printSpeed:30,firstSpeed:10,contactSpeed:5,
+    contactZone:.4,pathAccel:1000,travelSpeed:100,filamentDiameter:1.75,
+    bedX:180,bedY:180,bedZ:180,clearance:2
+  });
+  function gcodePrintNumber(value,decimals=4){
+    if(!Number.isFinite(value))throw new Error('G-codeの座標が不正です');
+    return Number(value.toFixed(decimals)).toString();
+  }
+  function buildOrderedGcodePaths(){
+    const specs=[];
+    // p.steps is the actual needlework sequence; do not sort by color,
+    // projected Z, polyhedron face, or stroke length.
+    const steps=currentPattern().steps||[];
+    for(let i=0;i<steps.length;i++){
+      const step=steps[i];if(step.kind!=='kagari')continue;
+      const raw=renderPointsForStep(step);
+      if(!raw||raw.length<2)continue;
+      const parts=viewStlPaths([{points:raw,stepNumber:i+1,stepTitle:step.title||'かがり'}]);
+      for(let j=0;j<parts.length;j++){
+        const pts=cleanStlPath(parts[j].points);
+        if(pts.length>=2)specs.push({stepNumber:i+1,partNumber:j+1,stepTitle:step.title||'かがり',points:pts});
+      }
+    }
+    if(!specs.length)throw new Error('出力するかがり糸の経路がありません');
+    return specs;
+  }
+  function simplifyOrderedGcodePaths(paths,radiusMm,mmTolerance){
+    const tol=mmTolerance/radiusMm;
+    return paths.map(p=>({...p,points:cleanStlPath(simplifyStlPath(p.points,tol))})).filter(p=>p.points.length>1);
+  }
+  function serializeKagariGcode(paths){
+    const cfg=KAGARI_GCODE_PROFILE;
+    const radiusMm=Math.max(1,(Number(state.diameterCm)||5)*5);
+    // Convert display-mode coordinates to mm, then translate to the center of
+    // the sample A1 mini bed.  Preserve aspect ratio and all XYZ distances.
+    let minZ=Infinity,maxZ=-Infinity;
+    for(const path of paths)for(const p of path.points){
+      const z=p.z*radiusMm;
+      minZ=Math.min(minZ,z);maxZ=Math.max(maxZ,z);
+    }
+    if(!Number.isFinite(minZ))throw new Error('経路がありません');
+    const zShift=cfg.layerHeight-minZ;
+    // Keep the A1 mini's 180-mm bed limit.  For near-edge unfolded paths
+    // allow only a tiny (up to 2%) XY fit, and record the factor explicitly.
+    // Larger overflow must be corrected by changing the temari diameter.
+    let minLayoutX=Infinity,maxLayoutX=-Infinity,minLayoutY=Infinity,maxLayoutY=-Infinity;
+    for(const path of paths)for(const p of path.points){
+      minLayoutX=Math.min(minLayoutX,p.x*radiusMm);maxLayoutX=Math.max(maxLayoutX,p.x*radiusMm);
+      minLayoutY=Math.min(minLayoutY,p.y*radiusMm);maxLayoutY=Math.max(maxLayoutY,p.y*radiusMm);
+    }
+    const firstMargin=cfg.lineWidth/2;
+    const safetyMargin=Math.max(1,firstMargin+.5);
+    const fitX=(cfg.bedX-safetyMargin*2)/(maxLayoutX-minLayoutX||1);
+    const fitY=(cfg.bedY-safetyMargin*2)/(maxLayoutY-minLayoutY||1);
+    const xyFit=Math.min(1,fitX,fitY);
+    if(xyFit<.12)throw new Error('展開図がA1 miniの造形範囲より非常に大きいため、手まりの直径を小さくしてください。');
+    const toMachine=p=>V(cfg.bedX/2+p.x*radiusMm*xyFit,cfg.bedY/2+p.y*radiusMm*xyFit,zShift+p.z*radiusMm);
+    let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity,maxZOut=-Infinity;
+    for(const path of paths)for(const p of path.points){
+      const q=toMachine(p);
+      minX=Math.min(minX,q.x);maxX=Math.max(maxX,q.x);
+      minY=Math.min(minY,q.y);maxY=Math.max(maxY,q.y);
+      maxZOut=Math.max(maxZOut,q.z);
+    }
+    if(minX-firstMargin<0||maxX+firstMargin>cfg.bedX||minY-firstMargin<0||maxY+firstMargin>cfg.bedY||maxZOut+cfg.clearance>cfg.bedZ){
+      throw new Error(`A1 miniの180×180×180 mmの造形範囲外です（X ${minX.toFixed(1)}〜${maxX.toFixed(1)}, Y ${minY.toFixed(1)}〜${maxY.toFixed(1)}, Z ${cfg.layerHeight.toFixed(1)}〜${maxZOut.toFixed(1)} mm）。手まりの直径を小さくしてください。`);
+    }
+    const area=Math.PI*cfg.threadDiameter**2/4;
+    const filamentArea=Math.PI*cfg.filamentDiameter**2/4;
+    const extrusionPerMm=area*cfg.flow/filamentArea;
+    const code=[
+      `; GCODEEDITOR_MODEL nozzle=${cfg.nozzle} width=${cfg.lineWidth} height=${cfg.layerHeight} flow=${cfg.flow} material=${cfg.material}`,
+      '; KAGARI_TEMARI_EXPORT version=1',
+      `; KAGARI_PATTERN ${state.key}`,
+      `; KAGARI_DISPLAY_MODE ${state.displayMode}`,
+      `; KAGARI_XY_FIT_SCALE ${gcodePrintNumber(xyFit,6)} (A1 mini 180x180 bed; 1 means no change)`,
+      ...(xyFit<.999?['; KAGARI_WARNING XY coordinates were uniformly reduced to fit A1 mini; dimensions differ from STL']:[]),
+      '; KAGARI_ORDER original stitching sequence (not sorted by Z)',
+      '; KAGARI_SAFETY visualization/editing only; NOT a validated machine-ready print',
+      '; KAGARI_UNSUPPORTED free-air printing, support, nozzle clearance, bed adhesion, AMS are NOT validated',
+      '; KAGARI_GCODE_THREAD_DIAMETER 0.4 mm (from supplied G-code; not the STL visual thread width)',
+      'G90','M82',`M140 S${cfg.bedtemp}`,`M104 S${cfg.hotend}`,
+      `M190 S${cfg.bedtemp}`,`M109 S${cfg.hotend}`,
+      'G28 T300',`M109 S${cfg.hotend}`,'G92 E0',
+      '; MACHINE_START_GCODE_END',
+      'M106 P1 S0 ; GCE_MATERIAL_FAN',
+      `M204 S${cfg.pathAccel} ; GCE_ACCEL`,
+      '; GCE_AMS_SLOT: 1'
+    ];
+    let pos=V(0,0,0),extrusion=0,printedTop=0,segments=0;
+    let lastStep=-1;
+    const firstMaxLen=.5;
+    const speedCapForSegment=(a,b,target)=>{
+      const d=sub(b,a),L=len(d);if(L<1e-9)return cfg.contactSpeed;
+      // Sample uses an A1-mini profile; slow down when a 3D motion has
+      // a strong vertical component to avoid exceeding Z-axis speeds.
+      const verticalCap=Math.abs(d.z)>1e-8?20*L/Math.abs(d.z):target;
+      return Math.max(.1,Math.min(target,verticalCap,cfg.mvs*cfg.safety/100/(area*cfg.flow)));
+    };
+    for(const path of paths){
+      if(path.stepNumber!==lastStep){
+        lastStep=path.stepNumber;
+        code.push(`; GCE_LAYER: ${lastStep-1}`,`; CHANGE_LAYER`,`; KAGARI_STEP ${lastStep} ${path.stepTitle.replace(/[\r\n;]/g,' ')}`,
+          `; LAYER_HEIGHT: ${cfg.layerHeight}`,`; LINE_WIDTH: ${cfg.lineWidth}`);
+      }
+      code.push(`; KAGARI_PART ${path.partNumber}`);
+      const start=toMachine(path.points[0]);
+      const safeZ=Math.min(cfg.bedZ,Math.max(printedTop,start.z,pos.z)+cfg.clearance);
+      code.push(`G0 Z${gcodePrintNumber(safeZ)} F1800`);
+      code.push(`G0 X${gcodePrintNumber(start.x)} Y${gcodePrintNumber(start.y)} F${cfg.travelSpeed*60}`);
+      code.push(`G0 Z${gcodePrintNumber(start.z)} F1800`);
+      pos=start;
+      const nSegments=path.points.length-1;
+      let pathDistance=0;
+      let pathTotalLength=0;
+      for(let i=1;i<path.points.length;i++)pathTotalLength+=len(sub(toMachine(path.points[i]),toMachine(path.points[i-1])));
+      for(let i=1;i<path.points.length;i++){
+        const b=toMachine(path.points[i]),a=pos,lenSeg=len(sub(b,a));
+        if(lenSeg<1e-6)continue;
+        const slices=Math.max(1,Math.ceil(lenSeg/firstMaxLen));
+        for(let j=1;j<=slices;j++){
+          const q=j===slices?b:lerp(a,b,j/slices),travelLength=len(sub(q,pos));
+          if(travelLength<1e-7)continue;
+          const nextPathDistance=pathDistance+travelLength;
+          // Sample's contactZone measures DISTANCE ALONG THE PATH, not the
+          // length of one G1 movement. Nearly all curved samples have <0.4mm
+          // segments, so comparing segment length would slow the entire print.
+          const nearEnd=nextPathDistance<=cfg.contactZone||pathTotalLength-nextPathDistance<=cfg.contactZone;
+          const baseSpeed=path.stepNumber===1?cfg.firstSpeed:cfg.printSpeed;
+          const target=nearEnd?cfg.contactSpeed:baseSpeed;
+          const feed=speedCapForSegment(pos,q,target)*60;
+          extrusion+=travelLength*extrusionPerMm;
+          code.push(`G1 X${gcodePrintNumber(q.x)} Y${gcodePrintNumber(q.y)} Z${gcodePrintNumber(q.z)} E${gcodePrintNumber(extrusion,5)} F${gcodePrintNumber(feed,2)} ; GCE_SEG:${nearEnd?'接着・転向部':'通常区間'}`);
+          pos=q;pathDistance=nextPathDistance;printedTop=Math.max(printedTop,q.z);segments++;
+          if(segments>220000)throw new Error('経路が複雑すぎます。別の表示モードや図案を選んでください。');
+        }
+      }
+    }
+    const finishZ=Math.min(cfg.bedZ,Math.max(pos.z,printedTop)+cfg.clearance);
+    code.push('; GCE_LAYER: -1',`G0 Z${gcodePrintNumber(finishZ)} F1800`,'M400','M106 S0','M104 S0','M140 S0','M84');
+    const speedMetadata={version:1,settings:{
+      speedMode:'thread',threadDiameter:String(cfg.threadDiameter),printSpeed:String(cfg.printSpeed),
+      firstSpeed:String(cfg.firstSpeed),contactSpeed:String(cfg.contactSpeed),
+      contactZone:String(cfg.contactZone),pathAccel:String(cfg.pathAccel),flowSource:'profile',
+      machine:cfg.machine,material:cfg.material,nozzle:String(cfg.nozzle),
+      lineWidth:String(cfg.lineWidth),layerHeight:String(cfg.layerHeight),flow:String(cfg.flow),
+      hotend:String(cfg.hotend),bedtemp:String(cfg.bedtemp),mvs:String(cfg.mvs),
+      safety:String(cfg.safety),travelSpeed:String(cfg.travelSpeed)
+    }};
+    code.push('; @GCE_SPEED '+JSON.stringify(speedMetadata));
+    code.push('; @GCE_AMS_SETTINGS '+JSON.stringify({version:1,flushVolume:250}));
+    code.push('; @GCE_PROFILE '+JSON.stringify({version:1,machine:cfg.machine,material:cfg.material,nozzle:String(cfg.nozzle),standardFlow:true,leftOnly:false}));
+    return code.join('\n')+'\n';
+  }
+  function generateKagariGcode(){
+    const radiusMm=Math.max(1,(Number(state.diameterCm)||5)*5);
+    const initial=buildOrderedGcodePaths();
+    for(const tolerance of [.03,.06,.1,.2,.4]){
+      const paths=simplifyOrderedGcodePaths(initial,radiusMm,tolerance);
+      const text=serializeKagariGcode(paths);
+      if(new Blob([text]).size<24000000)return text;
+    }
+    throw new Error('G-codeが24 MBを超えました。図案または手まりの直径を調整してください。');
+  }
+  function exportKagariGcode(){
+    try{
+      const result=generateKagariGcode();
+      downloadTextFile(`temari_${state.key}_${state.displayMode}_kagari.gcode`,result);
+    }catch(error){console.error(error);alert(`G-codeの出力に失敗しました：${error.message}`);}
+  }
   function exportCurrentSVG(){
     if(!(state.displayMode==='plane'||state.displayMode==='gore'||state.displayMode==='icoNet'||state.displayMode==='truncNet'||state.displayMode==='dodeNet'||state.displayMode==='ortho')) return;
     const scene=buildSceneForExport(),w=canvas.clientWidth,h=canvas.clientHeight;
@@ -2876,6 +3058,7 @@
   svgExportBtn.addEventListener('click',exportCurrentSVG);
   divisionStlBtn.addEventListener('click',exportDivisionSTL);
   kagariStlBtn.addEventListener('click',exportKagariSTL);
+  kagariGcodeBtn.addEventListener('click',exportKagariGcode);
   threadRenderMode.addEventListener('change',e=>{state.threadRender=e.target.value;updateThreadControlState()});
   realisticMaterialMode.addEventListener('change',e=>state.realisticMaterial=e.target.value);
   commonMaterialHelpBtn.addEventListener('click',()=>lineMethodHelp('realistic',realisticMaterialMode.value));
