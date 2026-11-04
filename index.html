@@ -1546,7 +1546,10 @@
   // Compact binary STL: 50 bytes per triangle instead of hundreds for ASCII STL.
   // Keep the *entire* download below 25,000,000 bytes, including its header.
   const STL_MAX_BYTES=24000000;
-  const STL_RING_SIDES=16;
+  // A 32-sided sweep is visually circular even under strong magnification.
+  // The existing 24 MB budget is kept by simplifying the *path*, not the ring,
+  // whenever possible.
+  const STL_RING_SIDES=32;
   function downloadTextFile(filename,textValue,mime='text/plain;charset=utf-8'){
     const blob=new Blob([textValue],{type:mime}),url=URL.createObjectURL(blob),a=document.createElement('a');
     a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1400);
@@ -1574,7 +1577,8 @@
     const out=[];
     for(const p of points||[]){
       if(!p||![p.x,p.y,p.z].every(Number.isFinite))continue;
-      if(!out.length||len(sub(p,out[out.length-1]))>1e-6)out.push(V(p.x,p.y,p.z));
+      // Avoid sub-float32-length steps, which can collapse to zero-width faces in an STL viewer.
+      if(!out.length||len(sub(p,out[out.length-1]))>1e-5)out.push(V(p.x,p.y,p.z));
     }
     return out;
   }
@@ -1616,79 +1620,128 @@
   function prepareStlPaths(pathSpecs,sphereRadiusMm,alreadyInDisplayCoordinates=false){
     const original=(alreadyInDisplayCoordinates?pathSpecs:viewStlPaths(pathSpecs)).map(spec=>({...spec,points:cleanStlPath(spec.points)}))
       .filter(spec=>spec.points.length>=2);
-    let paths=original,ringSides=STL_RING_SIDES;
     const budget=Math.floor((STL_MAX_BYTES-84)/50);
+    // A tube needs 2*sides faces per centerline point (end caps included).
     const faceCount=(parts,sides)=>parts.reduce((total,p)=>total+2*sides*stlPointCount(p.points),0);
-    // Preserve all path features when possible. Reduce only tessellation first;
-    // then use a bounded 3D curve error (in mm) if the pattern is exceptionally dense.
-    if(faceCount(paths,ringSides)>budget)ringSides=12;
-    if(faceCount(paths,ringSides)>budget){
-      for(const mm of [.025,.05,.1,.2,.4,.8,1.6,3.2,6.4,12.8]){
+    // Maintain round cross sections with >=24 sectors as long as geometry permits.
+    // Curvature-preserving path simplification is preferable to making a tube
+    // square or octagonal under the strict per-file size limit.
+    for(const sides of [STL_RING_SIDES,28,24]){
+      for(const mm of [0,.005,.012,.025,.05,.09,.16,.3]){
         const t=mm/sphereRadiusMm;
-        paths=original.map(spec=>({...spec,points:simplifyStlPath(spec.points,t)}));
-        if(faceCount(paths,ringSides)<=budget)break;
+        const candidate=mm===0?original:original.map(spec=>({...spec,points:simplifyStlPath(spec.points,t)}));
+        if(faceCount(candidate,sides)<=budget)return{paths:candidate,ringSides:sides,maximumFacets:faceCount(candidate,sides)};
       }
     }
-    if(faceCount(paths,ringSides)>budget)ringSides=8;
-    if(faceCount(paths,ringSides)>budget){
-      // Absolute budget fallback, with endpoints retained on every open path.
-      // This also bounds file size for diagrams with extremely dense coordinates.
-      const target=Math.floor(budget/(2*ringSides));
-      let step=Math.max(2,Math.ceil(paths.reduce((n,p)=>n+stlPointCount(p.points),0)/target));
-      for(let attempt=0;attempt<20;attempt++,step++){
-        paths=paths.map(spec=>{
-          const pts=spec.points,closed=stlPathIsClosed(pts),body=closed?pts.slice(0,-1):pts;
-          if(body.length<=3)return spec;
-          const next=[body[0]];
-          for(let i=step;i<body.length-1;i+=step)next.push(body[i]);
-          next.push(body[body.length-1]);
-          if(closed)next.push(body[0]);
-          return {...spec,points:next};
-        });
-        if(faceCount(paths,ringSides)<=budget)break;
+    for(const sides of [24,20,16]){
+      for(const mm of [.4,.8,1.6,3.2,6.4,12.8]){
+        const t=mm/sphereRadiusMm;
+        const candidate=original.map(spec=>({...spec,points:simplifyStlPath(spec.points,t)}));
+        if(faceCount(candidate,sides)<=budget)return{paths:candidate,ringSides:sides,maximumFacets:faceCount(candidate,sides)};
       }
     }
-    if(faceCount(paths,ringSides)>budget){
+    // Last resort for extremely dense patterns: subsample paths while retaining
+    // endpoints and the same maximum 24 MB output size.
+    let paths=original,ringSides=16;
+    const target=Math.floor(budget/(2*ringSides));
+    for(let attempt=2;attempt<=96;attempt++){
+      const total=paths.reduce((n,p)=>n+stlPointCount(p.points),0);
+      const step=Math.max(2,Math.ceil(total/target),attempt);
+      paths=original.map(spec=>{
+        const pts=spec.points,closed=stlPathIsClosed(pts),body=closed?pts.slice(0,-1):pts;
+        if(body.length<=3)return spec;
+        const next=[body[0]];
+        for(let i=step;i<body.length-1;i+=step)next.push(body[i]);
+        next.push(body[body.length-1]);
+        if(closed)next.push(body[0]);
+        return {...spec,points:next};
+      });
+      if(faceCount(paths,ringSides)<=budget)break;
+    }
+    if(faceCount(paths,ringSides)>budget)
       throw new Error('糸の本数が多く、24 MBのSTLに収められませんでした。図案を分割して出力してください。');
-    }
     return{paths,ringSides,maximumFacets:faceCount(paths,ringSides)};
+  }
+  function rotateStlSection(v,axis,angle){
+    const c=Math.cos(angle),s=Math.sin(angle);
+    return add(add(scale(v,c),scale(cross(axis,v),s)),scale(axis,dot(axis,v)*(1-c)));
+  }
+  function stlTransportSection(u,t0,t1){
+    // Minimal-rotation (parallel transport) frame. Unlike selecting a new radial
+    // vector at every point, this cannot suddenly rotate the ring by 90/180°.
+    const axis=cross(t0,t1),s=len(axis),c=clamp(dot(t0,t1),-1,1);
+    const moved=s>1e-9?rotateStlSection(u,scale(axis,1/s),Math.atan2(s,c)):u;
+    let projected=sub(moved,scale(t1,dot(moved,t1)));
+    if(len(projected)<1e-8){
+      const ref=Math.abs(t1.z)<.85?V(0,0,1):V(0,1,0);
+      projected=sub(ref,scale(t1,dot(ref,t1)));
+    }
+    return norm(projected);
   }
   function tubePathToStl(writer,points,diameterMm,sphereRadiusMm,ringSides){
     let pts=points;if(pts.length<2)return;
     const closed=stlPathIsClosed(pts);
     if(closed)pts=pts.slice(0,-1);
     if(pts.length<2)return;
-    const radius=Math.max(.02,diameterMm/2),rings=[];let prevU=null;
-    for(let i=0;i<pts.length;i++){
-      const pm=scale(pts[i],sphereRadiusMm);
-      let t;
-      if(closed)t=norm(sub(pts[(i+1)%pts.length],pts[(i-1+pts.length)%pts.length]));
-      else if(i===0)t=norm(sub(pts[1],pts[0]));
-      else if(i===pts.length-1)t=norm(sub(pts[i],pts[i-1]));
-      else t=norm(sub(pts[i+1],pts[i-1]));
-      let u=norm(pm);u=sub(u,scale(t,dot(u,t)));
-      if(len(u)<1e-5){const ref=Math.abs(t.y)<.85?V(0,1,0):V(1,0,0);u=cross(t,ref);}
-      u=norm(u);let v=norm(cross(t,u));
-      if(prevU&&dot(u,prevU)<0){u=scale(u,-1);v=scale(v,-1);}prevU=u;
-      const ring=[];
+    const radius=Math.max(.02,diameterMm/2),n=pts.length;
+    const centers=pts.map(p=>scale(p,sphereRadiusMm));
+    const tangents=[];
+    const tangentBetween=(a,b)=>norm(sub(centers[b],centers[a]));
+    for(let i=0;i<n;i++){
+      const prev=i===0?(closed?n-1:0):i-1,next=i===n-1?(closed?0:n-1):i+1;
+      if(!closed&&i===0){tangents.push(tangentBetween(i,next));continue;}
+      if(!closed&&i===n-1){tangents.push(tangentBetween(prev,i));continue;}
+      const before=tangentBetween(prev,i),after=tangentBetween(i,next),mean=add(before,after);
+      // A nearly reversing corner has no mathematical bisector tangent.
+      tangents.push(len(mean)>1e-5?norm(mean):after);
+    }
+    const flat=centers.every(p=>Math.abs(p.z-centers[0].z)<1e-8);
+    const t0=tangents[0];
+    let reference=flat?V(0,0,1):norm(centers[0]);
+    if(len(reference)<1e-7||Math.abs(dot(reference,t0))>.95)
+      reference=Math.abs(t0.z)<.85?V(0,0,1):V(0,1,0);
+    let u=norm(sub(reference,scale(t0,dot(reference,t0))));
+    const uSections=[u];
+    for(let i=1;i<n;i++){
+      u=flat?V(0,0,1):stlTransportSection(u,tangents[i-1],tangents[i]);
+      uSections.push(u);
+    }
+    if(closed&&!flat&&n>2){
+      // Compensate total holonomy over the loop so the last ring joins the
+      // first without the twisted zipper/seam seen in the previous STL export.
+      const returned=stlTransportSection(uSections[n-1],tangents[n-1],t0),first=uSections[0];
+      const twist=Math.atan2(dot(t0,cross(returned,first)),clamp(dot(returned,first),-1,1));
+      const lengths=[0];let total=0;
+      for(let i=1;i<n;i++){total+=len(sub(centers[i],centers[i-1]));lengths.push(total);}
+      total+=len(sub(centers[0],centers[n-1]));
+      if(total>0)for(let i=1;i<n;i++)uSections[i]=rotateStlSection(uSections[i],tangents[i],twist*lengths[i]/total);
+    }
+    const rings=[];
+    for(let i=0;i<n;i++){
+      const t=tangents[i],u=uSections[i],v=norm(cross(t,u)),ring=[];
       for(let k=0;k<ringSides;k++){
         const a=2*Math.PI*k/ringSides;
-        ring.push(add(pm,add(scale(u,Math.cos(a)*radius),scale(v,Math.sin(a)*radius))));
+        ring.push(add(centers[i],add(scale(u,Math.cos(a)*radius),scale(v,Math.sin(a)*radius))));
       }
       rings.push(ring);
     }
-    const pairCount=closed?rings.length:rings.length-1;
+    const pairCount=closed?n:n-1;
     for(let i=0;i<pairCount;i++){
-      const j=(i+1)%rings.length;
+      const j=(i+1)%n;
       for(let k=0;k<ringSides;k++){
         const k2=(k+1)%ringSides,a=rings[i][k],b=rings[j][k],c=rings[j][k2],d=rings[i][k2];
-        stlFacet(writer,a,b,c);stlFacet(writer,a,c,d);
+        // Crucial: outward winding. The previous (a,b,c)/(a,c,d) had inward
+        // tube side faces even though both end caps faced outward. Mesh viewers
+        // and slicers consequently displayed missing/inside-out surfaces.
+        stlFacet(writer,a,c,b);stlFacet(writer,a,d,c);
       }
     }
     if(!closed){
-      const c0=scale(pts[0],sphereRadiusMm),c1=scale(pts[pts.length-1],sphereRadiusMm);
+      const c0=centers[0],c1=centers[n-1];
       for(let k=0;k<ringSides;k++){
-        const k2=(k+1)%ringSides;stlFacet(writer,c0,rings[0][k2],rings[0][k]);stlFacet(writer,c1,rings[rings.length-1][k],rings[rings.length-1][k2]);
+        const k2=(k+1)%ringSides;
+        stlFacet(writer,c0,rings[0][k2],rings[0][k]);
+        stlFacet(writer,c1,rings[n-1][k],rings[n-1][k2]);
       }
     }
   }
